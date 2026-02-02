@@ -14,7 +14,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 const Dashboard = () => {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('sentinel_api_key') || '');
+  const [apiKey, setApiKey] = useState(localStorage.getItem('finsecure_api_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [dashboardStats, setDashboardStats] = useState(null);
