@@ -316,7 +316,7 @@ async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depe
 @api_router.post("/federated/aggregate")
 async def aggregate_gradients():
     """Aggregate gradients and update global model"""
-    global GLOBAL_MODEL, CURRENT_ROUND, MODEL_VERSION
+    global GLOBAL_MODEL, CURRENT_ROUND, MODEL_VERSION, PREVIOUS_ACCURACY
     
     round_id = f"round_{CURRENT_ROUND}"
     
@@ -328,6 +328,12 @@ async def aggregate_gradients():
     
     if not updates:
         return {"success": False, "message": "No gradients to aggregate"}
+    
+    if len(updates) < AGGREGATION_THRESHOLD:
+        return {
+            "success": False, 
+            "message": f"Waiting for more gradients ({len(updates)}/{AGGREGATION_THRESHOLD})"
+        }
     
     # Deserialize gradients
     gradients = [deserialize_model_weights(update['gradient_data']) for update in updates]
@@ -354,13 +360,33 @@ async def aggregate_gradients():
     
     await db.training_rounds.insert_one(training_round)
     
+    # Check for performance improvement
+    accuracy_improvement = avg_accuracy - PREVIOUS_ACCURACY
+    if accuracy_improvement > 0.01:  # 1% improvement threshold
+        improvement_pct = accuracy_improvement * 100
+        await broadcast_notification(
+            title="🎯 Model Performance Improved!",
+            message=f"Global model accuracy increased by {improvement_pct:.2f}% to {avg_accuracy*100:.2f}%. Round {CURRENT_ROUND} completed with {len(updates)} contributors.",
+            notification_type="success"
+        )
+    elif accuracy_improvement > 0:
+        await broadcast_notification(
+            title="✓ Training Round Complete",
+            message=f"Round {CURRENT_ROUND} completed. Model accuracy: {avg_accuracy*100:.2f}% ({len(updates)} contributors).",
+            notification_type="info"
+        )
+    
+    PREVIOUS_ACCURACY = avg_accuracy
     CURRENT_ROUND += 1
+    
+    logger.info(f"Aggregation complete: Round {CURRENT_ROUND-1}, Accuracy: {avg_accuracy:.4f}")
     
     return {
         "success": True,
         "round_number": CURRENT_ROUND - 1,
         "avg_accuracy": float(avg_accuracy),
-        "participating_companies": len(updates)
+        "participating_companies": len(updates),
+        "improvement": float(accuracy_improvement)
     }
 
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
