@@ -12,7 +12,7 @@ import numpy as np
 from datetime import datetime
 from io import BytesIO
 
-class SentinelAPITester:
+class FinSecureAPITester:
     def __init__(self, base_url="https://fintech-defender.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
