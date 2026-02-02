@@ -204,20 +204,27 @@ class FinSecureAPITester:
             data=nonexistent_login_data
         )
         return success
+
+    def test_duplicate_registration(self):
         """Test duplicate email registration"""
-        if not self.api_key:
+        if not self.test_email:
             return False
             
         # Try to register with same email
         duplicate_company = {
             "name": "Duplicate Test",
-            "email": f"test_{datetime.now().strftime('%H%M%S')}@testfintech.com"
+            "email": self.test_email,
+            "password": "AnotherPassword123!"
         }
         
         success, response = self.run_test(
             "Duplicate Registration Prevention",
             "POST", 
             "auth/register",
+            400,  # Should fail with 400
+            data=duplicate_company
+        )
+        return success
             400,  # Should fail with 400
             data=duplicate_company
         )
