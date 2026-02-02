@@ -135,6 +135,11 @@ const Dashboard = () => {
         headers: { 'X-API-Key': apiKey }
       });
       
+      if (!response.data || !response.data.content || !response.data.filename) {
+        throw new Error('Invalid response from server');
+      }
+      
+      // Create blob and download
       const blob = new Blob([response.data.content], { type: 'text/x-python' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -150,10 +155,10 @@ const Dashboard = () => {
         window.URL.revokeObjectURL(url);
       }, 100);
       
-      toast.success('Client script downloaded!');
+      toast.success(`Downloaded: ${response.data.filename}`);
     } catch (error) {
       console.error('Download error:', error);
-      toast.error('Failed to download script');
+      toast.error(error.response?.data?.detail || 'Failed to download script. Please try again.');
     }
   };
 
