@@ -377,14 +377,15 @@ class FinSecureAPITester:
 
 def main():
     print("=" * 80)
-    print("🛡️  SENTINEL FEDERATED LEARNING - API TESTING")
+    print("🛡️  FINSECURE FEDERATED LEARNING - API TESTING")
     print("=" * 80)
     
-    tester = SentinelAPITester()
+    tester = FinSecureAPITester()
     
     # Test sequence
     tests = [
         ("Company Registration", tester.test_company_registration),
+        ("API Key Prefix Validation", tester.test_api_key_prefix),
         ("API Key Verification", tester.test_api_key_verification),
         ("Invalid API Key Handling", tester.test_invalid_api_key),
         ("Companies List", tester.test_get_companies),
@@ -394,7 +395,9 @@ def main():
         ("Gradient Aggregation", tester.test_aggregate_gradients),
         ("Dashboard Analytics", tester.test_dashboard_analytics),
         ("Training Rounds", tester.test_training_rounds),
-        ("Client Script Download", tester.test_client_script_download)
+        ("Client Script Download", tester.test_client_script_download),
+        ("Client Script Branding", tester.test_client_script_branding),
+        ("Notifications System", tester.test_notifications_endpoints)
     ]
     
     print(f"\n🚀 Starting {len(tests)} API tests...\n")
