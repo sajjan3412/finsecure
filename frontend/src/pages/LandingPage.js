@@ -394,19 +394,73 @@ const LandingPage = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-2xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Login to FinSecure</h3>
+            
+            {/* Login Method Toggle */}
+            <div className="flex gap-2 mb-6 bg-[#050505] p-1 rounded-lg">
+              <button
+                onClick={() => setLoginMethod('email')}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  loginMethod === 'email'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-[#A1A1AA] hover:text-white'
+                }`}
+                data-testid="email-login-tab"
+              >
+                Email & Password
+              </button>
+              <button
+                onClick={() => setLoginMethod('apikey')}
+                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  loginMethod === 'apikey'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-[#A1A1AA] hover:text-white'
+                }`}
+                data-testid="apikey-login-tab"
+              >
+                API Key
+              </button>
+            </div>
+
             <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm mb-2 text-[#A1A1AA]">API Key</label>
-                <Input
-                  type="password"
-                  value={loginApiKey}
-                  onChange={(e) => setLoginApiKey(e.target.value)}
-                  className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
-                  placeholder="fs_xxxxxxxxxxxxx"
-                  data-testid="login-api-key-input"
-                />
-                <p className="text-xs text-[#A1A1AA] mt-2">Enter the API key you received during registration</p>
-              </div>
+              {loginMethod === 'email' ? (
+                <>
+                  <div>
+                    <label className="block text-sm mb-2 text-[#A1A1AA]">Email</label>
+                    <Input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+                      placeholder="admin@acme.com"
+                      data-testid="login-email-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-2 text-[#A1A1AA]">Password</label>
+                    <Input
+                      type="password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+                      placeholder="Enter your password"
+                      data-testid="login-password-input"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-sm mb-2 text-[#A1A1AA]">API Key</label>
+                  <Input
+                    type="password"
+                    value={loginApiKey}
+                    onChange={(e) => setLoginApiKey(e.target.value)}
+                    className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+                    placeholder="fs_xxxxxxxxxxxxx"
+                    data-testid="login-api-key-input"
+                  />
+                  <p className="text-xs text-[#A1A1AA] mt-2">Enter the API key you received during registration</p>
+                </div>
+              )}
               <div className="flex gap-3 mt-6">
                 <Button
                   type="button"
