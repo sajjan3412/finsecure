@@ -344,6 +344,36 @@ class FinSecureAPITester:
                 self.log_test("Client Script Branding", False, "Script content should contain 'FinSecure' branding")
                 return False
         return False
+    def test_notifications_endpoints(self):
+        """Test notification system endpoints"""
+        if not self.api_key:
+            return False
+            
+        # Test get notifications
+        success, response = self.run_test(
+            "Get Notifications",
+            "GET",
+            "notifications",
+            200
+        )
+        
+        if not success:
+            return False
+            
+        print(f"   Found {len(response)} notifications")
+        
+        # Test unread count
+        success, response = self.run_test(
+            "Get Unread Count",
+            "GET",
+            "notifications/unread/count",
+            200
+        )
+        
+        if success and 'unread_count' in response:
+            print(f"   Unread notifications: {response.get('unread_count')}")
+            return True
+        return False
 
 def main():
     print("=" * 80)
