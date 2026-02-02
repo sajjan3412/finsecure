@@ -132,6 +132,30 @@ def create_fraud_detection_model():
 GLOBAL_MODEL = create_fraud_detection_model()
 MODEL_VERSION = "1.0.0"
 CURRENT_ROUND = 0
+PREVIOUS_ACCURACY = 0.85
+AGGREGATION_THRESHOLD = 2  # Minimum number of gradients before aggregation
+
+# ============= NOTIFICATION HELPERS =============
+
+async def create_notification(title: str, message: str, notification_type: str = "info", company_id: Optional[str] = None):
+    """Create a notification for a company or broadcast to all"""
+    notification = {
+        "notification_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "title": title,
+        "message": message,
+        "type": notification_type,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.notifications.insert_one(notification)
+    logger.info(f"Created notification: {title} for company: {company_id or 'ALL'}")
+
+async def broadcast_notification(title: str, message: str, notification_type: str = "info"):
+    """Send notification to all active companies"""
+    companies = await db.companies.find({"status": "active"}, {"_id": 0}).to_list(1000)
+    for company in companies:
+        await create_notification(title, message, notification_type, company['company_id'])
 
 # ============= HELPER FUNCTIONS =============
 
