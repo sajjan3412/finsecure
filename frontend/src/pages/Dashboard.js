@@ -159,7 +159,7 @@ const Dashboard = () => {
         >
           <div className="flex items-center gap-3 mb-6">
             <ShieldCheck className="w-10 h-10 text-indigo-500" />
-            <h1 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Sentinel Dashboard</h1>
+            <h1 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>FinSecure Dashboard</h1>
           </div>
           <p className="text-[#A1A1AA] mb-6" style={{ fontFamily: 'IBM Plex Sans, sans-serif' }}>
             Enter your API key to access the federated learning dashboard.
@@ -172,7 +172,7 @@ const Dashboard = () => {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 className="bg-[#050505] border-white/10 focus:border-indigo-500 rounded-md h-10"
-                placeholder="sf_xxxxxxxxxxxxx"
+                placeholder="fs_xxxxxxxxxxxxx"
                 data-testid="api-key-input"
               />
             </div>
