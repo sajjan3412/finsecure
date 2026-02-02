@@ -168,7 +168,7 @@ async def verify_api_key(x_api_key: str = Header(...)):
 
 def generate_api_key():
     """Generate a secure API key"""
-    return f"sf_{secrets.token_urlsafe(32)}"
+    return f"fs_{secrets.token_urlsafe(32)}"
 
 def serialize_model_weights(model):
     """Serialize model weights to base64 string"""
