@@ -238,13 +238,19 @@ async def register_company(company_input: CompanyRegister):
     if existing:
         raise HTTPException(status_code=400, detail="Company with this email already exists")
     
-    # Generate API key
+    # Validate password
+    if len(company_input.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long")
+    
+    # Generate API key and hash password
     api_key = generate_api_key()
+    password_hash = hash_password(company_input.password)
     
     # Create company
     company = Company(
         name=company_input.name,
         email=company_input.email,
+        password_hash=password_hash,
         api_key=api_key
     )
     
@@ -254,6 +260,31 @@ async def register_company(company_input: CompanyRegister):
     await db.companies.insert_one(doc)
     
     return company
+
+@api_router.post("/auth/login", response_model=LoginResponse)
+async def login_company(login_input: CompanyLogin):
+    """Login with email and password"""
+    # Find company by email
+    company = await db.companies.find_one({"email": login_input.email}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Verify password
+    if not verify_password(login_input.password, company['password_hash']):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Check if company is active
+    if company.get('status') != 'active':
+        raise HTTPException(status_code=403, detail="Company account is not active")
+    
+    return LoginResponse(
+        success=True,
+        company_id=company['company_id'],
+        name=company['name'],
+        email=company['email'],
+        api_key=company['api_key'],
+        message="Login successful"
+    )
 
 @api_router.get("/auth/verify")
 async def verify_key(company: dict = Depends(verify_api_key)):
