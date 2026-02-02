@@ -315,6 +315,17 @@ const LandingPage = () => {
                       data-testid="email-input"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm mb-2 text-[#A1A1AA]">Password</label>
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+                      placeholder="Min 8 characters"
+                      data-testid="password-input"
+                    />
+                  </div>
                   <div className="flex gap-3 mt-6">
                     <Button
                       type="button"
