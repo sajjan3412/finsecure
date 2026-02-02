@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sentinel Federated Learning - Backend API Tests
+FinSecure Federated Learning - Backend API Tests
 Tests all endpoints for the federated fraud detection system
 """
 
