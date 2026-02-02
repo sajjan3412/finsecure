@@ -102,14 +102,18 @@ class FinSecureAPITester:
         return base64.b64encode(buffer.read()).decode('utf-8')
 
     def test_company_registration(self):
-        """Test company registration endpoint"""
+        """Test company registration endpoint with password"""
+        self.test_email = f"test_{datetime.now().strftime('%H%M%S')}@testfintech.com"
+        self.test_password = "TestPassword123!"
+        
         test_company = {
             "name": f"Test Fintech {datetime.now().strftime('%H%M%S')}",
-            "email": f"test_{datetime.now().strftime('%H%M%S')}@testfintech.com"
+            "email": self.test_email,
+            "password": self.test_password
         }
         
         success, response = self.run_test(
-            "Company Registration",
+            "Company Registration with Password",
             "POST",
             "auth/register",
             200,
