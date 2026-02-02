@@ -135,15 +135,24 @@ const Dashboard = () => {
         headers: { 'X-API-Key': apiKey }
       });
       
-      const blob = new Blob([response.data.content], { type: 'text/plain' });
+      const blob = new Blob([response.data.content], { type: 'text/x-python' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
+      a.style.display = 'none';
       a.href = url;
       a.download = response.data.filename;
+      document.body.appendChild(a);
       a.click();
+      
+      // Cleanup
+      setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }, 100);
       
       toast.success('Client script downloaded!');
     } catch (error) {
+      console.error('Download error:', error);
       toast.error('Failed to download script');
     }
   };
