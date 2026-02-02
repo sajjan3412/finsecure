@@ -15,8 +15,12 @@ const LandingPage = () => {
   const navigate = useNavigate();
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [loginMethod, setLoginMethod] = useState('email'); // 'email' or 'apikey'
   const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginApiKey, setLoginApiKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [registeredData, setRegisteredData] = useState(null);
