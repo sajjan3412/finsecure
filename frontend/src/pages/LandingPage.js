@@ -14,8 +14,10 @@ const API = `${BACKEND_URL}/api`;
 const LandingPage = () => {
   const navigate = useNavigate();
   const [showRegister, setShowRegister] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
+  const [loginApiKey, setLoginApiKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [registeredData, setRegisteredData] = useState(null);
 
