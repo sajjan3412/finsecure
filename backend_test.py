@@ -300,27 +300,48 @@ class FinSecureAPITester:
             return True
         return False
 
-    def test_client_script_download(self):
-        """Test client script download"""
+    def test_api_key_prefix(self):
+        """Test that API keys start with 'fs_' prefix"""
+        if not self.api_key:
+            return False
+            
+        if self.api_key.startswith('fs_'):
+            self.log_test("API Key Prefix Validation", True)
+            print(f"   ✓ API key has correct 'fs_' prefix")
+            return True
+        else:
+            self.log_test("API Key Prefix Validation", False, f"API key should start with 'fs_' but starts with '{self.api_key[:3]}'")
+            return False
+
+    def test_client_script_branding(self):
+        """Test client script contains FinSecure branding"""
         if not self.api_key:
             return False
             
         success, response = self.run_test(
-            "Client Script Download",
+            "Client Script FinSecure Branding",
             "GET",
             "client/script",
             200
         )
         
         if success and 'content' in response and 'filename' in response:
-            print(f"   Script filename: {response.get('filename')}")
-            print(f"   Script size: {len(response.get('content', ''))} characters")
-            # Verify script contains API key
-            if self.api_key in response.get('content', ''):
-                print(f"   ✓ API key properly embedded in script")
+            content = response.get('content', '')
+            filename = response.get('filename', '')
+            
+            # Check filename uses finsecure_client_ prefix
+            if filename.startswith('finsecure_client_'):
+                print(f"   ✓ Filename has correct prefix: {filename}")
+            else:
+                self.log_test("Client Script Branding", False, f"Filename should start with 'finsecure_client_' but is '{filename}'")
+                return False
+            
+            # Check content contains FinSecure branding
+            if 'FinSecure' in content:
+                print(f"   ✓ Script contains FinSecure branding")
                 return True
             else:
-                print(f"   ❌ API key not found in script")
+                self.log_test("Client Script Branding", False, "Script content should contain 'FinSecure' branding")
                 return False
         return False
 
