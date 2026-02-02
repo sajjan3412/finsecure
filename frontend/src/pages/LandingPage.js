@@ -318,6 +318,51 @@ const LandingPage = () => {
           </motion.div>
         </div>
       )}
+
+      {/* Login Modal */}
+      {showLogin && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" data-testid="login-modal">
+          <motion.div
+            className="bg-[#0A0A0A] border border-white/10 rounded-xl p-8 max-w-md w-full"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+          >
+            <h3 className="text-2xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Login to FinSecure</h3>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm mb-2 text-[#A1A1AA]">API Key</label>
+                <Input
+                  type="password"
+                  value={loginApiKey}
+                  onChange={(e) => setLoginApiKey(e.target.value)}
+                  className="bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+                  placeholder="fs_xxxxxxxxxxxxx"
+                  data-testid="login-api-key-input"
+                />
+                <p className="text-xs text-[#A1A1AA] mt-2">Enter the API key you received during registration</p>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <Button
+                  type="button"
+                  onClick={() => setShowLogin(false)}
+                  className="h-10 px-6 rounded-md bg-white/5 hover:bg-white/10 text-white border border-white/10"
+                  data-testid="login-cancel-btn"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="h-10 px-6 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white flex-1"
+                  data-testid="login-submit-btn"
+                >
+                  {loading ? 'Verifying...' : 'Login'}
+                </Button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
