@@ -1,0 +1,157 @@
+{
+  "brand_identity": {
+    "name": "Sentinel Federated",
+    "archetype": "The Performance Pro (Cyber-Security Variant)",
+    "emotional_tone": "Secure, Intelligent, Collaborative, Precision",
+    "theme_mode": "dark",
+    "primary_concept": "The Global Neural Shield"
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Chivo, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "google_fonts_import": "https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+    "usage_rules": {
+      "headings": "Use Chivo Black (900) for Hero titles, Bold (700) for Section headers. Tracking-tight (-0.02em).",
+      "body": "IBM Plex Sans for all paragraphs. Leading-relaxed.",
+      "data": "Use JetBrains Mono for API keys, hash values, and code snippets."
+    }
+  },
+  "colors": {
+    "palette": {
+      "background": "#050505",
+      "surface_primary": "#0A0A0A",
+      "surface_secondary": "#121212",
+      "surface_tertiary": "#1C1C1C",
+      "primary": "#6366F1",
+      "primary_glow": "rgba(99, 102, 241, 0.5)",
+      "secondary": "#10B981",
+      "accent_alert": "#F43F5E",
+      "text_primary": "#EDEDED",
+      "text_secondary": "#A1A1AA",
+      "border_subtle": "#27272A"
+    },
+    "usage": {
+      "dashboard_bg": "bg-[#050505]",
+      "card_bg": "bg-[#0A0A0A] border border-[#27272A]",
+      "primary_action": "bg-indigo-500 hover:bg-indigo-600 text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]",
+      "success_indicator": "text-emerald-500",
+      "fraud_alert": "text-rose-500"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": {
+      "dashboard_glass": "bg-black/40 backdrop-blur-xl border-white/5",
+      "overlay_glass": "bg-black/60 backdrop-blur-2xl border-white/10"
+    },
+    "gradients": {
+      "hero_glow": "radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%)",
+      "beam_border": "linear-gradient(90deg, transparent, #6366F1, transparent)"
+    },
+    "textures": {
+      "grid_pattern": "bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"
+    }
+  },
+  "layout_strategies": {
+    "landing_page": {
+      "grid_type": "Bento Grid (Mode A)",
+      "spacing": "Gap-8 to Gap-12",
+      "container": "max-w-7xl mx-auto px-6"
+    },
+    "dashboard": {
+      "grid_type": "High Density Grid (Mode B)",
+      "spacing": "Gap-4",
+      "sidebar_width": "w-64",
+      "card_style": "Rounded-lg (not xl), dense padding (p-4 or p-5)"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "h-10 px-6 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-all hover:shadow-[0_0_20px_rgba(99,102,241,0.4)]",
+      "secondary": "h-10 px-6 rounded-md bg-white/5 hover:bg-white/10 text-white border border-white/10 backdrop-blur-sm"
+    },
+    "cards": {
+      "feature": "group relative overflow-hidden rounded-xl bg-[#0A0A0A] border border-white/5 p-8 hover:border-indigo-500/30 transition-colors",
+      "stat": "rounded-lg bg-[#121212] border border-white/5 p-4 flex flex-col justify-between"
+    },
+    "inputs": {
+      "style": "bg-[#050505] border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-md h-10"
+    }
+  },
+  "image_urls": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1764336312138-14a5368a6cd3?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Abstract Neural Network Brain",
+      "usage": "Hero section background with heavy dark overlay (opacity 80%)"
+    },
+    "security_feature": {
+      "url": "https://images.unsplash.com/photo-1696013910376-c56f76dd8178?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Cybersecurity Lock",
+      "usage": "Feature section: Privacy Guarantee"
+    },
+    "team_collaboration": {
+      "url": "https://images.unsplash.com/photo-1677078610152-8a627d8ced8d?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Fintech Team",
+      "usage": "About/Company section"
+    },
+    "data_visualization": {
+      "url": "https://images.unsplash.com/photo-1750969185331-e03829f72c7d?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Abstract Data Lines",
+      "usage": "Background for 'How it Works' section"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "preferred_icons": {
+      "dashboard": "LayoutDashboard",
+      "model": "BrainCircuit",
+      "security": "ShieldCheck",
+      "analytics": "Activity",
+      "clients": "Network",
+      "settings": "Settings2",
+      "download": "DownloadCloud"
+    }
+  },
+  "motion": {
+    "library": "framer-motion",
+    "presets": {
+      "fade_up": {
+        "initial": { "opacity": 0, "y": 20 },
+        "animate": { "opacity": 1, "y": 0 },
+        "transition": { "duration": 0.5 }
+      },
+      "hover_scale": {
+        "whileHover": { "scale": 1.02 },
+        "transition": { "duration": 0.2 }
+      }
+    }
+  },
+  "charts_and_maps": {
+    "library": "recharts",
+    "theme": {
+      "grid_color": "#333",
+      "tooltip_bg": "#121212",
+      "tooltip_border": "#333"
+    },
+    "3d_library": "react-globe-gl",
+    "3d_usage": "Use React Globe GL on the Dashboard to visualize active client nodes across the world. Points should pulse."
+  },
+  "instructions_to_main_agent": [
+    "1. IMPLEMENT DARK MODE BY DEFAULT. Do not create a light mode toggle unless explicitly asked. The brand is 'Cyber-Security'.",
+    "2. Use the 'High Density Grid' for the Dashboard. It should feel like a cockpit.",
+    "3. For the 'Federated Learning' visualization, create a custom component using Recharts or simple CSS animations showing data packets moving from 'Client Nodes' to the 'Central Model' without revealing raw data.",
+    "4. The 'Client Script' download page must look like a developer documentation page (JetBrains Mono font, code blocks).",
+    "5. Use 'sonner' for all notifications (e.g., 'Model Updated', 'Client Connected').",
+    "6. Ensure all API keys are masked by default with a 'Show' toggle.",
+    "7. The Landing Page must use the 'Bento Grid' layout to showcase features."
+  ],
+  "universal_guidelines": [
+    "Do not use gradients on text.",
+    "Do not center align the app container.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Every interaction needs micro-animations.",
+    "All interactive elements must include data-testid."
+  ]
+}
