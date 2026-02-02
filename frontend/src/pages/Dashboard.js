@@ -125,7 +125,7 @@ const Dashboard = () => {
   };
 
   const handleConnect = () => {
-    localStorage.setItem('sentinel_api_key', apiKey);
+    localStorage.setItem('finsecure_api_key', apiKey);
     verifyApiKey();
   };
 
