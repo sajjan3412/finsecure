@@ -675,6 +675,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ============= SCHEDULER =============
+
+scheduler = AsyncIOScheduler()
+
+async def auto_aggregate_gradients():
+    """Scheduled job to automatically aggregate gradients"""
+    try:
+        logger.info("Running scheduled gradient aggregation...")
+        result = await aggregate_gradients()
+        if result.get('success'):
+            logger.info(f"Auto-aggregation successful: {result}")
+        else:
+            logger.info(f"Auto-aggregation skipped: {result.get('message')}")
+    except Exception as e:
+        logger.error(f"Error in auto-aggregation: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Start scheduler on app startup"""
+    # Run aggregation every 5 minutes
+    scheduler.add_job(
+        auto_aggregate_gradients,
+        'interval',
+        minutes=5,
+        id='auto_aggregate',
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info("Scheduler started - auto-aggregation every 5 minutes")
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    scheduler.shutdown()
     client.close()
