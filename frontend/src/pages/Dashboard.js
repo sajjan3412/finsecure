@@ -70,10 +70,57 @@ const Dashboard = () => {
       setDashboardStats(statsRes.data);
       setTrainingRounds(roundsRes.data);
       setCompanies(companiesRes.data);
+      
+      // Load notifications
+      await loadNotifications();
     } catch (error) {
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadNotifications = async () => {
+    try {
+      const [notifRes, countRes] = await Promise.all([
+        axios.get(`${API}/notifications`, {
+          headers: { 'X-API-Key': apiKey }
+        }),
+        axios.get(`${API}/notifications/unread/count`, {
+          headers: { 'X-API-Key': apiKey }
+        })
+      ]);
+      
+      setNotifications(notifRes.data);
+      setUnreadCount(countRes.data.unread_count);
+      
+      // Show toast for new unread notifications
+      const newUnread = notifRes.data.filter(n => !n.read);
+      if (newUnread.length > 0 && newUnread[0].type === 'success') {
+        toast.success(newUnread[0].title, {
+          description: newUnread[0].message
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load notifications:', error);
+    }
+  };
+
+  const markAsRead = async (notificationId) => {
+    try {
+      await axios.post(
+        `${API}/notifications/${notificationId}/read`,
+        {},
+        { headers: { 'X-API-Key': apiKey } }
+      );
+      
+      // Update local state
+      setNotifications(notifications.map(n => 
+        n.notification_id === notificationId ? { ...n, read: true } : n
+      ));
+      setUnreadCount(Math.max(0, unreadCount - 1));
+    } catch (error) {
+      console.error('Failed to mark as read:', error);
     }
   };
 
