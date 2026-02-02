@@ -198,7 +198,7 @@ const Dashboard = () => {
           <div className="flex items-center gap-3">
             <ShieldCheck className="w-8 h-8 text-indigo-500" />
             <div>
-              <h1 className="text-xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Sentinel Federated</h1>
+              <h1 className="text-xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>FinSecure</h1>
               {companyInfo && (
                 <p className="text-xs text-[#A1A1AA]">{companyInfo.name}</p>
               )}
