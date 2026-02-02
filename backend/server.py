@@ -93,6 +93,22 @@ class DashboardStats(BaseModel):
     total_updates: int
     latest_round: Optional[Dict[str, Any]]
 
+class Notification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    notification_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_id: Optional[str] = None  # None means broadcast to all
+    title: str
+    message: str
+    type: str = "info"  # info, success, warning, error
+    read: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class NotificationCreate(BaseModel):
+    company_id: Optional[str] = None
+    title: str
+    message: str
+    type: str = "info"
+
 # ============= ML SETUP =============
 
 def create_fraud_detection_model():
