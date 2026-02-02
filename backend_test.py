@@ -344,6 +344,29 @@ class FinSecureAPITester:
                 self.log_test("Client Script Branding", False, "Script content should contain 'FinSecure' branding")
                 return False
         return False
+    def test_client_script_download(self):
+        """Test client script download"""
+        if not self.api_key:
+            return False
+            
+        success, response = self.run_test(
+            "Client Script Download",
+            "GET",
+            "client/script",
+            200
+        )
+        
+        if success and 'content' in response and 'filename' in response:
+            print(f"   Script filename: {response.get('filename')}")
+            print(f"   Script size: {len(response.get('content', ''))} characters")
+            # Verify script contains API key
+            if self.api_key in response.get('content', ''):
+                print(f"   ✓ API key properly embedded in script")
+                return True
+            else:
+                print(f"   ❌ API key not found in script")
+                return False
+        return False
     def test_notifications_endpoints(self):
         """Test notification system endpoints"""
         if not self.api_key:
