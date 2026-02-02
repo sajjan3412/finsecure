@@ -441,7 +441,7 @@ async def get_client_script(company: dict = Depends(verify_api_key)):
     """Get client script for company"""
     script_template = '''#!/usr/bin/env python3
 """
-Sentinel Federated - Client Script
+FinSecure Federated Learning - Client Script
 Company: {company_name}
 Generated: {timestamp}
 """
@@ -571,18 +571,18 @@ class FederatedClient:
 # Example usage
 if __name__ == "__main__":
     print("="*60)
-    print("Sentinel Federated Learning Client")
+    print("FinSecure Federated Learning Client")
     print("Company: {company_name}")
     print("="*60)
     
     client = FederatedClient(API_KEY, BACKEND_URL)
     
     # Step 1: Download global model
-    print("\n[1] Downloading global model...")
+    print("\\n[1] Downloading global model...")
     client.download_model()
     
     # Step 2: Load YOUR local transaction data
-    print("\n[2] Loading local transaction data...")
+    print("\\n[2] Loading local transaction data...")
     # IMPORTANT: Replace this with your actual transaction data
     # This is just dummy data for demonstration
     X_train = np.random.randn(1000, 30).astype(np.float32)
@@ -590,14 +590,14 @@ if __name__ == "__main__":
     print(f"✓ Loaded {{len(X_train)}} transactions (PRIVATE - stays local)")
     
     # Step 3: Train on local data
-    print("\n[3] Training on local data...")
+    print("\\n[3] Training on local data...")
     metrics = client.train_local(X_train, y_train, epochs=3)
     
     # Step 4: Submit ONLY gradients (not data)
-    print("\n[4] Submitting gradients to central server...")
+    print("\\n[4] Submitting gradients to central server...")
     client.submit_gradients(metrics)
     
-    print("\n" + "="*60)
+    print("\\n" + "="*60)
     print("✓ Federated learning cycle complete!")
     print("Your transaction data remained completely private.")
     print("="*60)
@@ -610,7 +610,7 @@ if __name__ == "__main__":
     )
     
     return {
-        "filename": f"sentinel_client_{company['company_id'][:8]}.py",
+        "filename": f"finsecure_client_{company['company_id'][:8]}.py",
         "content": script_content
     }
 
