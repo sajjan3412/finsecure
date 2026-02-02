@@ -27,8 +27,13 @@ const LandingPage = () => {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    if (!companyName || !email) {
+    if (!companyName || !email || !password) {
       toast.error('Please fill all fields');
+      return;
+    }
+
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters long');
       return;
     }
 
@@ -36,7 +41,8 @@ const LandingPage = () => {
     try {
       const response = await axios.post(`${API}/auth/register`, {
         name: companyName,
-        email: email
+        email: email,
+        password: password
       });
       
       setRegisteredData(response.data);
@@ -51,26 +57,53 @@ const LandingPage = () => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!loginApiKey) {
-      toast.error('Please enter your API key');
-      return;
-    }
 
-    setLoading(true);
-    try {
-      const response = await axios.get(`${API}/auth/verify`, {
-        headers: { 'X-API-Key': loginApiKey }
-      });
-      
-      if (response.data.valid) {
-        localStorage.setItem('finsecure_api_key', loginApiKey);
-        toast.success(`Welcome back, ${response.data.name}!`);
-        navigate('/dashboard');
+    if (loginMethod === 'email') {
+      if (!loginEmail || !loginPassword) {
+        toast.error('Please enter email and password');
+        return;
       }
-    } catch (error) {
-      toast.error('Invalid API key');
-    } finally {
-      setLoading(false);
+
+      setLoading(true);
+      try {
+        const response = await axios.post(`${API}/auth/login`, {
+          email: loginEmail,
+          password: loginPassword
+        });
+        
+        if (response.data.success) {
+          localStorage.setItem('finsecure_api_key', response.data.api_key);
+          toast.success(`Welcome back, ${response.data.name}!`);
+          navigate('/dashboard');
+        }
+      } catch (error) {
+        toast.error(error.response?.data?.detail || 'Invalid email or password');
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // API Key login
+      if (!loginApiKey) {
+        toast.error('Please enter your API key');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const response = await axios.get(`${API}/auth/verify`, {
+          headers: { 'X-API-Key': loginApiKey }
+        });
+        
+        if (response.data.valid) {
+          localStorage.setItem('finsecure_api_key', loginApiKey);
+          toast.success(`Welcome back, ${response.data.name}!`);
+          navigate('/dashboard');
+        }
+      } catch (error) {
+        toast.error('Invalid API key');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
