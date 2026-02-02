@@ -26,6 +26,7 @@ const Dashboard = () => {
     if (apiKey) {
       verifyApiKey();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const verifyApiKey = async () => {
