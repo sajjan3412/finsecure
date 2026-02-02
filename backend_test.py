@@ -225,10 +225,6 @@ class FinSecureAPITester:
             data=duplicate_company
         )
         return success
-            400,  # Should fail with 400
-            data=duplicate_company
-        )
-        return success
 
     def test_api_key_verification(self):
         """Test API key verification"""
