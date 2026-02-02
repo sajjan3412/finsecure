@@ -101,16 +101,25 @@ const LandingPage = () => {
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-10 h-10 text-indigo-500" />
               <h1 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                Sentinel Federated
+                FinSecure
               </h1>
             </div>
-            <Button 
-              onClick={() => setShowRegister(true)}
-              className="h-10 px-6 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-all hover:shadow-[0_0_20px_rgba(99,102,241,0.4)]"
-              data-testid="get-started-btn"
-            >
-              Get Started
-            </Button>
+            <div className="flex gap-3">
+              <Button 
+                onClick={() => setShowLogin(true)}
+                className="h-10 px-6 rounded-md bg-white/5 hover:bg-white/10 text-white border border-white/10"
+                data-testid="login-btn"
+              >
+                Login
+              </Button>
+              <Button 
+                onClick={() => setShowRegister(true)}
+                className="h-10 px-6 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-all hover:shadow-[0_0_20px_rgba(99,102,241,0.4)]"
+                data-testid="get-started-btn"
+              >
+                Get Started
+              </Button>
+            </div>
           </motion.div>
 
           {/* Hero Content */}
