@@ -321,11 +321,20 @@ const LandingPage = () => {
 
       {/* Login Modal */}
       {showLogin && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" data-testid="login-modal">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" 
+          data-testid="login-modal"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowLogin(false);
+            }
+          }}
+        >
           <motion.div
             className="bg-[#0A0A0A] border border-white/10 rounded-xl p-8 max-w-md w-full"
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-2xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Login to FinSecure</h3>
             <form onSubmit={handleLogin} className="space-y-4">
