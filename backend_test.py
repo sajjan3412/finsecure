@@ -129,7 +129,81 @@ class FinSecureAPITester:
             return True
         return False
 
-    def test_duplicate_registration(self):
+    def test_password_validation(self):
+        """Test password length validation"""
+        short_password_company = {
+            "name": "Short Password Test",
+            "email": f"short_{datetime.now().strftime('%H%M%S')}@testfintech.com",
+            "password": "short"  # Less than 8 characters
+        }
+        
+        success, response = self.run_test(
+            "Password Length Validation (< 8 chars)",
+            "POST",
+            "auth/register",
+            400,  # Should fail with 400
+            data=short_password_company
+        )
+        return success
+
+    def test_email_password_login(self):
+        """Test email/password login endpoint"""
+        if not self.test_email or not self.test_password:
+            return False
+            
+        login_data = {
+            "email": self.test_email,
+            "password": self.test_password
+        }
+        
+        success, response = self.run_test(
+            "Email/Password Login (Success)",
+            "POST",
+            "auth/login",
+            200,
+            data=login_data
+        )
+        
+        if success and response.get('success') and 'api_key' in response:
+            print(f"   Login successful for: {response.get('name')}")
+            print(f"   API key returned: {response.get('api_key')[:20]}...")
+            return True
+        return False
+
+    def test_wrong_password_login(self):
+        """Test login with wrong password"""
+        if not self.test_email:
+            return False
+            
+        wrong_login_data = {
+            "email": self.test_email,
+            "password": "WrongPassword123!"
+        }
+        
+        success, response = self.run_test(
+            "Email/Password Login (Wrong Password)",
+            "POST",
+            "auth/login",
+            401,  # Should fail with 401
+            data=wrong_login_data
+        )
+        return success
+
+    def test_nonexistent_email_login(self):
+        """Test login with non-existent email"""
+        nonexistent_login_data = {
+            "email": "nonexistent@example.com",
+            "password": "SomePassword123!"
+        }
+        
+        success, response = self.run_test(
+            "Email/Password Login (Non-existent Email)",
+            "POST",
+            "auth/login",
+            401,  # Should fail with 401
+            data=nonexistent_login_data
+        )
+        return success
         """Test duplicate email registration"""
         if not self.api_key:
             return False
