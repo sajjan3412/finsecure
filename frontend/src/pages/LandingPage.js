@@ -36,10 +36,35 @@ const LandingPage = () => {
       });
       
       setRegisteredData(response.data);
-      localStorage.setItem('sentinel_api_key', response.data.api_key);
+      localStorage.setItem('finsecure_api_key', response.data.api_key);
       toast.success('Company registered successfully!');
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!loginApiKey) {
+      toast.error('Please enter your API key');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API}/auth/verify`, {
+        headers: { 'X-API-Key': loginApiKey }
+      });
+      
+      if (response.data.valid) {
+        localStorage.setItem('finsecure_api_key', loginApiKey);
+        toast.success(`Welcome back, ${response.data.name}!`);
+        navigate('/dashboard');
+      }
+    } catch (error) {
+      toast.error('Invalid API key');
     } finally {
       setLoading(false);
     }
