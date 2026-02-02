@@ -494,7 +494,12 @@ def main():
     
     # Test sequence
     tests = [
-        ("Company Registration", tester.test_company_registration),
+        ("Company Registration with Password", tester.test_company_registration),
+        ("Password Length Validation", tester.test_password_validation),
+        ("Email/Password Login (Success)", tester.test_email_password_login),
+        ("Email/Password Login (Wrong Password)", tester.test_wrong_password_login),
+        ("Email/Password Login (Non-existent Email)", tester.test_nonexistent_email_login),
+        ("Duplicate Registration Prevention", tester.test_duplicate_registration),
         ("API Key Prefix Validation", tester.test_api_key_prefix),
         ("API Key Verification", tester.test_api_key_verification),
         ("Invalid API Key Handling", tester.test_invalid_api_key),
