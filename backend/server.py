@@ -61,6 +61,14 @@ class CompanyResponse(BaseModel):
     status: str
     created_at: datetime
 
+class LoginResponse(BaseModel):
+    success: bool
+    company_id: str
+    name: str
+    email: str
+    api_key: str
+    message: str
+
 class GradientUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     update_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
