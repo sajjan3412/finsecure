@@ -204,14 +204,101 @@ const Dashboard = () => {
               )}
             </div>
           </div>
-          <Button
-            onClick={downloadClientScript}
-            className="h-9 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-sm"
-            data-testid="download-client-btn"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Download Client
-          </Button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="h-9 w-9 p-0 rounded-md bg-white/5 hover:bg-white/10 text-white border border-white/10 relative"
+                data-testid="notifications-btn"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {unreadCount}
+                  </span>
+                )}
+              </Button>
+              
+              {/* Notifications Dropdown */}
+              <AnimatePresence>
+                {showNotifications && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="absolute right-0 top-12 w-96 bg-[#0A0A0A] border border-white/10 rounded-lg shadow-xl z-50"
+                    data-testid="notifications-dropdown"
+                  >
+                    <div className="p-4 border-b border-white/10 flex justify-between items-center">
+                      <h3 className="font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Notifications</h3>
+                      <Button
+                        onClick={() => setShowNotifications(false)}
+                        className="h-6 w-6 p-0 bg-transparent hover:bg-white/5"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-[#A1A1AA]">
+                          <Bell className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                          <p>No notifications yet</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-white/5">
+                          {notifications.map((notif) => (
+                            <div
+                              key={notif.notification_id}
+                              className={`p-4 hover:bg-white/5 cursor-pointer transition-colors ${
+                                !notif.read ? 'bg-indigo-500/5' : ''
+                              }`}
+                              onClick={() => markAsRead(notif.notification_id)}
+                              data-testid={`notification-${notif.notification_id}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <p className="font-medium text-sm">{notif.title}</p>
+                                    {!notif.read && (
+                                      <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-[#A1A1AA]">{notif.message}</p>
+                                  <p className="text-xs text-[#A1A1AA] mt-1">
+                                    {new Date(notif.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <Badge
+                                  className={`text-xs ${
+                                    notif.type === 'success'
+                                      ? 'bg-emerald-500/20 text-emerald-500'
+                                      : notif.type === 'error'
+                                      ? 'bg-rose-500/20 text-rose-500'
+                                      : 'bg-indigo-500/20 text-indigo-500'
+                                  }`}
+                                >
+                                  {notif.type}
+                                </Badge>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            
+            <Button
+              onClick={downloadClientScript}
+              className="h-9 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-sm"
+              data-testid="download-client-btn"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download Client
+            </Button>
+          </div>
         </div>
       </div>
 
