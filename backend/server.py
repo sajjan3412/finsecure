@@ -182,7 +182,7 @@ def deserialize_model_weights(data_str):
     """Deserialize model weights from base64 string"""
     data = base64.b64decode(data_str)
     buffer = BytesIO(data)
-    npz_file = np.load(buffer)
+    npz_file = np.load(buffer, allow_pickle=True)
     return [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
 
 def federated_averaging(gradient_list):
