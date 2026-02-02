@@ -15,6 +15,8 @@ import numpy as np
 import tensorflow as tf
 from io import BytesIO
 import base64
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
