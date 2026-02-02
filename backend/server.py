@@ -38,6 +38,7 @@ class Company(BaseModel):
     company_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     email: EmailStr
+    password_hash: str
     api_key: str
     status: str = "active"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -45,6 +46,11 @@ class Company(BaseModel):
 class CompanyRegister(BaseModel):
     name: str
     email: EmailStr
+    password: str
+
+class CompanyLogin(BaseModel):
+    email: EmailStr
+    password: str
 
 class CompanyResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
