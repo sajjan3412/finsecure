@@ -185,6 +185,15 @@ def generate_api_key():
     """Generate a secure API key"""
     return f"fs_{secrets.token_urlsafe(32)}"
 
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
 def serialize_model_weights(model):
     """Serialize model weights to base64 string"""
     weights = model.get_weights()
