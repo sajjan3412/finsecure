@@ -180,10 +180,16 @@ def serialize_model_weights(model):
 
 def deserialize_model_weights(data_str):
     """Deserialize model weights from base64 string"""
-    data = base64.b64decode(data_str)
-    buffer = BytesIO(data)
-    npz_file = np.load(buffer, allow_pickle=True)
-    return [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
+    try:
+        data = base64.b64decode(data_str)
+        buffer = BytesIO(data)
+        buffer.seek(0)
+        npz_file = np.load(buffer, allow_pickle=True)
+        weights = [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
+        return weights
+    except Exception as e:
+        logger.error(f"Error deserializing weights: {str(e)}")
+        raise
 
 def federated_averaging(gradient_list):
     """Perform federated averaging of gradients"""
