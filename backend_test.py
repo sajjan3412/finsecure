@@ -18,6 +18,8 @@ class FinSecureAPITester:
         self.api_url = f"{base_url}/api"
         self.api_key = None
         self.company_id = None
+        self.test_email = None
+        self.test_password = None
         self.tests_run = 0
         self.tests_passed = 0
         self.test_results = []
