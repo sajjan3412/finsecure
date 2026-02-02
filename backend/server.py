@@ -608,6 +608,56 @@ if __name__ == "__main__":
         "content": script_content
     }
 
+@api_router.get("/notifications", response_model=List[Notification])
+async def get_notifications(company: dict = Depends(verify_api_key), unread_only: bool = False):
+    """Get notifications for a company"""
+    query = {
+        "$or": [
+            {"company_id": company['company_id']},
+            {"company_id": None}  # Broadcast notifications
+        ]
+    }
+    
+    if unread_only:
+        query["read"] = False
+    
+    notifications = await db.notifications.find(
+        query,
+        {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+    
+    for notification in notifications:
+        if isinstance(notification['created_at'], str):
+            notification['created_at'] = datetime.fromisoformat(notification['created_at'])
+    
+    return notifications
+
+@api_router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, company: dict = Depends(verify_api_key)):
+    """Mark a notification as read"""
+    result = await db.notifications.update_one(
+        {"notification_id": notification_id},
+        {"$set": {"read": True}}
+    )
+    
+    if result.modified_count > 0:
+        return {"success": True}
+    else:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+@api_router.get("/notifications/unread/count")
+async def get_unread_count(company: dict = Depends(verify_api_key)):
+    """Get count of unread notifications"""
+    count = await db.notifications.count_documents({
+        "$or": [
+            {"company_id": company['company_id']},
+            {"company_id": None}
+        ],
+        "read": False
+    })
+    
+    return {"unread_count": count}
+
 # Include router
 app.include_router(api_router)
 
