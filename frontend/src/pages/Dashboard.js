@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API = `${https://finsecure-ochi.onrender.com}/api`;
 
 const Dashboard = () => {
   const [apiKey, setApiKey] = useState(localStorage.getItem('finsecure_api_key') || '');
