@@ -64,7 +64,8 @@
   },
   "overrides": {
     "ajv": "6.12.6",
-    "ajv-keywords": "3.5.2"
+    "ajv-keywords": "3.5.2",
+    "ajv-formats": "2.1.1"
   },
   "browserslist": {
     "production": [
