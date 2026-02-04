@@ -397,113 +397,109 @@ async def get_dashboard_stats():
 
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
-    """Get customized client script"""
-    # Dynamically determine the backend URL based on the request
+    """
+    Generates the Internet Gateway Script.
+    This script ONLY handles the connection (Download/Upload).
+    It does NOT contain the ML model or training logic.
+    """
+    # Dynamically determine the backend URL
     base_url = str(request.base_url).rstrip('/')
     api_url = f"{base_url}/api"
 
     script_template = '''#!/usr/bin/env python3
 """
-FinSecure Federated Learning - Client Script
+FinSecure Gateway Script
 Company: {company_name}
+Role: Internet Bridge (No Training)
 """
-import tensorflow as tf
-import numpy as np
 import requests
-import base64
-from io import BytesIO
+import json
+import os
+import time
+import sys
 
-# Configuration
+# --- CONFIGURATION ---
 API_KEY = "{api_key}"
-BACKEND_URL = "{backend_url}" 
+BACKEND_URL = "{backend_url}"
+EXCHANGE_FOLDER = "./secure_transfer"  # Folder shared with your internal ML model
 
-class FederatedClient:
+class FederatedGateway:
     def __init__(self, api_key, backend_url):
-        self.api_key = api_key
+        self.headers = {{"X-API-Key": api_key}}
         self.backend_url = backend_url
-        self.model = None
-        self.headers = {{"X-API-Key": self.api_key}}
-    
-    def download_model(self):
-        print(f"Connecting to {{self.backend_url}}...")
-        response = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers)
-        if response.status_code == 200:
-            data = response.json()
-            self.model = self._build_model()
-            weights = self._deserialize_weights(data['weights'])
-            self.model.set_weights(weights)
-            print(f"✓ Model downloaded (Round {{data['round']}})")
-        else:
-            print(f"✗ Failed to download model: {{response.text}}")
-
-    def _build_model(self):
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(32, activation='relu'),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(16, activation='relu'),
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        return model
-
-    def _deserialize_weights(self, data_str):
-        data = base64.b64decode(data_str)
-        buffer = BytesIO(data)
-        npz_file = np.load(buffer, allow_pickle=True)
-        return [npz_file[f'arr_{{i}}'] for i in range(len(npz_file.files))]
-
-    def _serialize_weights(self, weights):
-        buffer = BytesIO()
-        np.savez_compressed(buffer, *weights)
-        buffer.seek(0)
-        return base64.b64encode(buffer.read()).decode('utf-8')
-
-    def train_local(self, X_train, y_train, epochs=3):
-        if not self.model: return
-        print(f"Training on {{len(X_train)}} samples...")
-        history = self.model.fit(X_train, y_train, epochs=epochs, verbose=0, validation_split=0.2)
+        self.current_round = -1
         
-        metrics = {{
-            'accuracy': float(history.history['accuracy'][-1]),
-            'loss': float(history.history['loss'][-1])
-        }}
-        
-        # Submit Gradients
-        weights = self.model.get_weights()
-        gradient_data = self._serialize_weights(weights)
-        
-        resp = requests.post(
-            f"{{self.backend_url}}/federated/submit-gradients",
-            headers=self.headers,
-            json={{"gradient_data": gradient_data, "metrics": metrics}}
-        )
-        if resp.status_code == 200:
-            print("✓ Gradients submitted successfully")
-        else:
-            print(f"✗ Submission failed: {{resp.text}}")
+        # Ensure the shared folder exists
+        os.makedirs(EXCHANGE_FOLDER, exist_ok=True)
+        print(f"🌉 Gateway Active | Company: {company_name}")
+        print(f"📂 Monitoring Folder: {{EXCHANGE_FOLDER}}")
 
-# Run
+    def run(self):
+        """Main Loop: Syncs data between Internet and Local Folder"""
+        print("⏳ Waiting for updates...")
+        while True:
+            self._sync_downstream()  # Internet -> Folder
+            self._sync_upstream()    # Folder -> Internet
+            time.sleep(5)
+
+    def _sync_downstream(self):
+        """Check Server for new Global Model -> Save to Folder"""
+        try:
+            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                server_round = data.get('round', 0)
+                
+                # If new round, save it for the internal model
+                if server_round > self.current_round:
+                    print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
+                    
+                    filepath = f"{{EXCHANGE_FOLDER}}/global_model.json"
+                    with open(filepath, "w") as f:
+                        json.dump(data, f)
+                    
+                    print(f"    Saved to {{filepath}}")
+                    self.current_round = server_round
+        except Exception as e:
+            print(f"⚠️ Connection Error: {{e}}")
+
+    def _sync_upstream(self):
+        """Check Folder for Gradients -> Upload to Server"""
+        local_file = f"{{EXCHANGE_FOLDER}}/local_gradients.json"
+        
+        if os.path.exists(local_file):
+            print("\\n⬆️  Found local updates. Uploading to server...")
+            try:
+                with open(local_file, "r") as f:
+                    payload = json.load(f)
+                
+                resp = requests.post(
+                    f"{{self.backend_url}}/federated/submit-gradients",
+                    headers=self.headers,
+                    json=payload
+                )
+                
+                if resp.status_code == 200:
+                    print("    ✅ Upload Successful!")
+                    os.remove(local_file) # Delete after success
+                else:
+                    print(f"    ❌ Upload Failed: {{resp.text}}")
+            except Exception as e:
+                print(f"⚠️ Upload Error: {{e}}")
+
 if __name__ == "__main__":
-    client = FederatedClient(API_KEY, BACKEND_URL)
-    client.download_model()
-    
-    # DUMMY DATA (Replace with real data)
-    X = np.random.randn(100, 30).astype(np.float32)
-    y = np.random.randint(0, 2, 100).astype(np.float32)
-    
-    client.train_local(X, y)
+    gateway = FederatedGateway(API_KEY, BACKEND_URL)
+    gateway.run()
 '''
+
     return {
-        "filename": "client.py",
+        "filename": "finsecure_gateway.py",
         "content": script_template.format(
             company_name=company['name'],
             api_key=company['api_key'],
             backend_url=api_url
         )
     }
-
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
     notifications = await db.notifications.find(
