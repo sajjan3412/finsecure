@@ -41,6 +41,8 @@ const Dashboard = () => {
       }, 30000);
       return () => clearInterval(interval);
     }
+    // Add this line below to ignore the warning:
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated]);
 
   const verifyApiKey = async () => {
