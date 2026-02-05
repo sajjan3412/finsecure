@@ -541,9 +541,6 @@ async def get_notification_count():
     """
     # You can connect this to a real DB collection later
     return {"count": 0}
-
-# Include API Router
-app.include_router(api_router)
 # --- FIX FOR ANALYTICS 404 ERROR ---
 
 @api_router.get("/analytics/rounds")
@@ -582,6 +579,8 @@ async def get_round_analytics():
     except Exception as e:
         print(f"Error fetching analytics: {e}")
         return []
+# Include API Router
+app.include_router(api_router)
 
 # ============= CORS SETUP (CRITICAL FIX) =============
 app.add_middleware(
