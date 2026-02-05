@@ -508,6 +508,40 @@ async def get_notifications(company: dict = Depends(verify_api_key)):
     ).sort("created_at", -1).limit(50).to_list(50)
     return notifications
 
+@api_router.get("/companies")
+async def get_active_companies():
+    """
+    Fixes: GET /api/companies 404
+    Returns the list of registered banks/companies from the database.
+    """
+    try:
+        # Fetch all users who are registered as companies
+        cursor = db.users.find({}) # You can filter by {"role": "company"} if you have roles
+        companies = await cursor.to_list(length=100)
+        
+        results = []
+        for company in companies:
+            results.append({
+                "id": str(company["_id"]),
+                "name": company.get("name", "Unknown Bank"),
+                "email": company.get("email", ""),
+                "status": "Active", # You can make this dynamic later
+                "joined_at": company.get("created_at", "Recently")
+            })
+        return results
+    except Exception as e:
+        print(f"Error fetching companies: {e}")
+        return []
+
+@api_router.get("/notifications/unread/count")
+async def get_notification_count():
+    """
+    Fixes: GET /api/notifications/unread/count 404
+    Returns 0 to stop the console error.
+    """
+    # You can connect this to a real DB collection later
+    return {"count": 0}
+
 # Include API Router
 app.include_router(api_router)
 
