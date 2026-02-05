@@ -537,23 +537,25 @@ async def get_notification_count():
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
     """
-    Fixes: GET /api/analytics/rounds 404
+    Fixes: Blank Graph
+    Reads directly from 'training_rounds' where the aggregator saves data.
     """
     try:
-        # FIXED: Reading from 'training_rounds' (where aggregation saves data), 
-        # NOT 'model_versions' (which doesn't exist)
+        # CORRECTION: Look at 'training_rounds', not 'model_versions'
         cursor = db.training_rounds.find({}).sort("round_number", 1)
         history = await cursor.to_list(length=100)
         
         analytics_data = []
         for entry in history:
             analytics_data.append({
-                "round": entry.get("round_number", 0),
-                "accuracy": entry.get("avg_accuracy", 0),
+                # Map the database fields to what the Frontend expects
+                "round": entry.get("round_number", 0),      # DB: round_number -> UI: round
+                "accuracy": entry.get("avg_accuracy", 0),   # DB: avg_accuracy -> UI: accuracy
                 "loss": entry.get("avg_loss", 0),
                 "timestamp": entry.get("timestamp", "")
             })
             
+        # If no data exists yet, return dummy data to prevent crash
         if not analytics_data:
             return [
                 {"round": 1, "accuracy": 0.65, "loss": 0.80},
