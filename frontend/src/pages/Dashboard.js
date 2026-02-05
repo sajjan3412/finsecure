@@ -377,22 +377,28 @@ const Dashboard = () => {
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={trainingRounds}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                    
+                    {/* FIXED: XAxis now uses "round" instead of "round_number" */}
                     <XAxis 
-                      dataKey="round_number" 
+                      dataKey="round" 
                       stroke="#A1A1AA"
                       label={{ value: 'Training Round', position: 'insideBottom', offset: -5, fill: '#A1A1AA' }}
                     />
+                    
                     <YAxis 
                       stroke="#A1A1AA"
                       label={{ value: 'Accuracy', angle: -90, position: 'insideLeft', fill: '#A1A1AA' }}
                     />
+                    
                     <Tooltip 
                       contentStyle={{ backgroundColor: '#121212', border: '1px solid #333' }}
                       labelStyle={{ color: '#EDEDED' }}
                     />
+                    
+                    {/* FIXED: Line now uses "accuracy" instead of "avg_accuracy" */}
                     <Line 
                       type="monotone" 
-                      dataKey="avg_accuracy" 
+                      dataKey="accuracy" 
                       stroke="#6366F1" 
                       strokeWidth={2}
                       dot={{ fill: '#6366F1' }}
