@@ -568,6 +568,22 @@ async def get_round_analytics():
     except Exception as e:
         print(f"Error fetching analytics: {e}")
         return []
+@api_router.delete("/reset-system")
+async def reset_database():
+    """
+    Clears all training history so the graph can start fresh.
+    """
+    # Delete all old history that is confusing the graph
+    await db.training_rounds.delete_many({})
+    await db.gradient_updates.delete_many({})
+    
+    # Reset variables
+    global CURRENT_ROUND, GLOBAL_MODEL
+    CURRENT_ROUND = 0
+    GLOBAL_MODEL = create_fraud_detection_model()
+    
+    print("♻️ SYSTEM RESET: Graph is now empty and ready.")
+    return {"message": "System Reset Successful!"}
 
 # Include API Router
 app.include_router(api_router)
