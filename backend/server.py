@@ -61,7 +61,7 @@ def create_fraud_detection_model():
     )
     return model
 
-# ============= LIFESPAN MANAGER (Modern Startup/Shutdown) =============
+# ============= LIFESPAN MANAGER =============
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -73,6 +73,7 @@ async def lifespan(app: FastAPI):
     GLOBAL_MODEL = create_fraud_detection_model()
     
     # 2. Get latest round info from DB to restore state
+    # FIXED: Checking 'training_rounds' collection
     latest_round = await db.training_rounds.find_one(
         {}, 
         sort=[("round_number", -1)]
@@ -399,10 +400,7 @@ async def get_dashboard_stats():
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
     """
     Generates the Internet Gateway Script.
-    This script ONLY handles the connection (Download/Upload).
-    It does NOT contain the ML model or training logic.
     """
-    # Dynamically determine the backend URL
     base_url = str(request.base_url).rstrip('/')
     api_url = f"{base_url}/api"
 
@@ -421,7 +419,7 @@ import sys
 # --- CONFIGURATION ---
 API_KEY = "{api_key}"
 BACKEND_URL = "{backend_url}"
-EXCHANGE_FOLDER = "./secure_transfer"  # Folder shared with your internal ML model
+EXCHANGE_FOLDER = "./secure_transfer" 
 
 class FederatedGateway:
     def __init__(self, api_key, backend_url):
@@ -438,8 +436,8 @@ class FederatedGateway:
         """Main Loop: Syncs data between Internet and Local Folder"""
         print("⏳ Waiting for updates...")
         while True:
-            self._sync_downstream()  # Internet -> Folder
-            self._sync_upstream()    # Folder -> Internet
+            self._sync_downstream() 
+            self._sync_upstream()   
             time.sleep(5)
 
     def _sync_downstream(self):
@@ -450,7 +448,6 @@ class FederatedGateway:
                 data = resp.json()
                 server_round = data.get('round', 0)
                 
-                # If new round, save it for the internal model
                 if server_round > self.current_round:
                     print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
                     
@@ -481,7 +478,7 @@ class FederatedGateway:
                 
                 if resp.status_code == 200:
                     print("    ✅ Upload Successful!")
-                    os.remove(local_file) # Delete after success
+                    os.remove(local_file) 
                 else:
                     print(f"    ❌ Upload Failed: {{resp.text}}")
             except Exception as e:
@@ -500,6 +497,7 @@ if __name__ == "__main__":
             backend_url=api_url
         )
     }
+
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
     notifications = await db.notifications.find(
@@ -512,11 +510,10 @@ async def get_notifications(company: dict = Depends(verify_api_key)):
 async def get_active_companies():
     """
     Fixes: GET /api/companies 404
-    Returns the list of registered banks/companies from the database.
     """
     try:
-        # Fetch all users who are registered as companies
-        cursor = db.users.find({}) # You can filter by {"role": "company"} if you have roles
+        # FIXED: Reading from 'companies' collection, NOT 'users'
+        cursor = db.companies.find({}) 
         companies = await cursor.to_list(length=100)
         
         results = []
@@ -525,7 +522,7 @@ async def get_active_companies():
                 "id": str(company["_id"]),
                 "name": company.get("name", "Unknown Bank"),
                 "email": company.get("email", ""),
-                "status": "Active", # You can make this dynamic later
+                "status": "Active",
                 "joined_at": company.get("created_at", "Recently")
             })
         return results
@@ -535,38 +532,28 @@ async def get_active_companies():
 
 @api_router.get("/notifications/unread/count")
 async def get_notification_count():
-    """
-    Fixes: GET /api/notifications/unread/count 404
-    Returns 0 to stop the console error.
-    """
-    # You can connect this to a real DB collection later
     return {"count": 0}
-# --- FIX FOR ANALYTICS 404 ERROR ---
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
     """
     Fixes: GET /api/analytics/rounds 404
-    Returns the history of Global Model performance (Round vs Accuracy).
     """
     try:
-        # 1. Fetch all global model versions from history
-        cursor = db.model_versions.find({}).sort("round", 1) # Sort by Round 1, 2, 3...
+        # FIXED: Reading from 'training_rounds' (where aggregation saves data), 
+        # NOT 'model_versions' (which doesn't exist)
+        cursor = db.training_rounds.find({}).sort("round_number", 1)
         history = await cursor.to_list(length=100)
         
         analytics_data = []
         for entry in history:
-            # Check if this round has metrics (some initial rounds might be empty)
-            metrics = entry.get("metrics", {})
-            
             analytics_data.append({
-                "round": entry.get("round", 0),
-                "accuracy": metrics.get("accuracy", 0),
-                "loss": metrics.get("loss", 0),
-                "timestamp": entry.get("created_at", "")
+                "round": entry.get("round_number", 0),
+                "accuracy": entry.get("avg_accuracy", 0),
+                "loss": entry.get("avg_loss", 0),
+                "timestamp": entry.get("timestamp", "")
             })
             
-        # If database is empty, return dummy data so the chart doesn't crash
         if not analytics_data:
             return [
                 {"round": 1, "accuracy": 0.65, "loss": 0.80},
@@ -579,13 +566,15 @@ async def get_round_analytics():
     except Exception as e:
         print(f"Error fetching analytics: {e}")
         return []
+
 # Include API Router
 app.include_router(api_router)
 
-# ============= CORS SETUP (CRITICAL FIX) =============
+# ============= CORS SETUP =============
+# FIXED: Syntax error was here
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow ALL origins (Vercel, Localhost, etc.)
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
