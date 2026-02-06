@@ -38,7 +38,7 @@ GLOBAL_MODEL = None
 MODEL_VERSION = "1.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 2  # Minimum gradients before aggregation
+AGGREGATION_THRESHOLD = 1  # Kept at 1 for your Demo to work instantly
 
 scheduler = AsyncIOScheduler()
 
@@ -73,7 +73,6 @@ async def lifespan(app: FastAPI):
     GLOBAL_MODEL = create_fraud_detection_model()
     
     # 2. Get latest round info from DB to restore state
-    # FIXED: Checking 'training_rounds' collection
     latest_round = await db.training_rounds.find_one(
         {}, 
         sort=[("round_number", -1)]
@@ -193,6 +192,7 @@ def serialize_model_weights(model):
     buffer.seek(0)
     return base64.b64encode(buffer.read()).decode('utf-8')
 
+# --- UPDATED: Safe Deserialization ---
 def deserialize_model_weights(data_str):
     try:
         data = base64.b64decode(data_str)
@@ -201,8 +201,28 @@ def deserialize_model_weights(data_str):
         weights = [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
         return weights
     except Exception as e:
-        logger.error(f"Error deserializing weights: {str(e)}")
-        raise
+        logger.error(f"❌ Malformed Gradients Detected: {str(e)}")
+        return None # Return None on failure so we can skip this update
+
+# --- NEW: Gradient Validation ---
+def validate_gradient_shape(decoded_weights, model):
+    """
+    Security Check: Ensures uploaded gradients match the Global Model's architecture.
+    """
+    model_weights = model.get_weights()
+    
+    # 1. Check Layer Count
+    if len(decoded_weights) != len(model_weights):
+        logger.warning(f"Shape Mismatch: Received {len(decoded_weights)} layers, expected {len(model_weights)}")
+        return False
+        
+    # 2. Check Shape of Each Layer
+    for i, (new_w, true_w) in enumerate(zip(decoded_weights, model_weights)):
+        if new_w.shape != true_w.shape:
+            logger.warning(f"Layer {i} Mismatch: Received {new_w.shape}, expected {true_w.shape}")
+            return False
+            
+    return True
 
 def federated_averaging(gradient_list):
     if not gradient_list:
@@ -231,14 +251,14 @@ async def broadcast_notification(title: str, message: str, notification_type: st
 
 # ============= CORE LOGIC =============
 
+# --- UPDATED: Robust Aggregation ---
 async def aggregate_gradients():
-    """Aggregate gradients and update global model"""
+    """Aggregate gradients and update global model with Safety Checks"""
     global GLOBAL_MODEL, CURRENT_ROUND, MODEL_VERSION, PREVIOUS_ACCURACY
     
     round_id = f"round_{CURRENT_ROUND}"
-    
     updates = await db.gradient_updates.find(
-        {"round_id": round_id},
+        {"round_id": round_id, "status": "pending"},
         {"_id": 0}
     ).to_list(1000)
     
@@ -248,45 +268,63 @@ async def aggregate_gradients():
             "message": f"Waiting for gradients ({len(updates)}/{AGGREGATION_THRESHOLD})"
         }
     
-    logger.info(f"Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
+    logger.info(f"🔄 Processing {len(updates)} updates for Round {CURRENT_ROUND}")
 
-    # Deserialize and Average
-    gradients = [deserialize_model_weights(update['gradient_data']) for update in updates]
-    avg_gradients = federated_averaging(gradients)
+    valid_gradients = []
+    valid_metrics = []
+    
+    # --- STEP 1: FILTER BAD UPDATES ---
+    for update in updates:
+        weights = deserialize_model_weights(update['gradient_data'])
+        
+        # Check if deserialization worked AND shapes match
+        if weights is not None and validate_gradient_shape(weights, GLOBAL_MODEL):
+            valid_gradients.append(weights)
+            valid_metrics.append(update['metrics'])
+        else:
+            logger.error(f"⚠️ Dropped corrupt update from Company ID: {update.get('company_id')}")
+
+    if not valid_gradients:
+        logger.error("❌ All updates in this round were corrupt! Aborting aggregation.")
+        return {"success": False, "message": "All updates failed validation"}
+
+    # --- STEP 2: FEDERATED AVERAGING ---
+    avg_gradients = federated_averaging(valid_gradients)
     
     # Update Model
     GLOBAL_MODEL.set_weights(avg_gradients)
     
     # Metrics
-    avg_accuracy = np.mean([update['metrics'].get('accuracy', 0) for update in updates])
-    avg_loss = np.mean([update['metrics'].get('loss', 0) for update in updates])
+    avg_accuracy = np.mean([m.get('accuracy', 0) for m in valid_metrics])
+    avg_loss = np.mean([m.get('loss', 0) for m in valid_metrics])
     
     # Save Round
     training_round = {
         "round_id": round_id,
         "round_number": CURRENT_ROUND,
-        "participating_companies": [u['company_id'] for u in updates],
+        "participating_companies": len(valid_gradients), # Only count valid ones
         "avg_accuracy": float(avg_accuracy),
         "avg_loss": float(avg_loss),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
     await db.training_rounds.insert_one(training_round)
+
+    # Mark updates as processed
+    await db.gradient_updates.update_many(
+        {"round_id": round_id},
+        {"$set": {"status": "processed"}}
+    )
     
     # Notification Logic
     accuracy_improvement = avg_accuracy - PREVIOUS_ACCURACY
-    if accuracy_improvement > 0.01:
-        await broadcast_notification(
-            title="🎯 Model Performance Improved!",
-            message=f"Accuracy +{accuracy_improvement*100:.2f}% (Now {avg_accuracy*100:.2f}%). Round {CURRENT_ROUND} complete.",
-            notification_type="success"
-        )
-    else:
-         await broadcast_notification(
-            title="✓ Training Round Complete",
-            message=f"Round {CURRENT_ROUND} done. Accuracy: {avg_accuracy*100:.2f}%",
-            notification_type="info"
-        )
+    msg_type = "success" if accuracy_improvement > 0 else "info"
+    
+    await broadcast_notification(
+        title="Training Round Complete",
+        message=f"Round {CURRENT_ROUND} done. Valid Updates: {len(valid_gradients)}. Accuracy: {avg_accuracy*100:.2f}%",
+        notification_type=msg_type
+    )
     
     PREVIOUS_ACCURACY = avg_accuracy
     CURRENT_ROUND += 1
@@ -360,9 +398,19 @@ async def download_model(company: dict = Depends(verify_api_key)):
         "round": CURRENT_ROUND
     }
 
+# --- UPDATED: Secure Submission Endpoint ---
 @api_router.post("/federated/submit-gradients")
 async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depends(verify_api_key)):
     global CURRENT_ROUND
+    
+    # 1. Input Sanitation
+    if not (0 <= gradient_submit.metrics.get('accuracy', 0) <= 1):
+        raise HTTPException(status_code=400, detail="Invalid Accuracy Metric (Must be 0-1)")
+
+    # 2. Basic Validation
+    if not gradient_submit.gradient_data:
+         raise HTTPException(status_code=400, detail="Empty Gradient Data")
+
     round_id = f"round_{CURRENT_ROUND}"
     
     gradient_update = {
@@ -371,11 +419,12 @@ async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depe
         "round_id": round_id,
         "gradient_data": gradient_submit.gradient_data,
         "metrics": gradient_submit.metrics,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "pending" # New field for safe aggregation
     }
     
     await db.gradient_updates.insert_one(gradient_update)
-    return {"success": True, "round_id": round_id, "message": "Gradients received"}
+    return {"success": True, "round_id": round_id, "message": "Gradients accepted for processing"}
 
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
 async def get_dashboard_stats():
@@ -508,11 +557,7 @@ async def get_notifications(company: dict = Depends(verify_api_key)):
 
 @api_router.get("/companies")
 async def get_active_companies():
-    """
-    Fixes: GET /api/companies 404
-    """
     try:
-        # FIXED: Reading from 'companies' collection, NOT 'users'
         cursor = db.companies.find({}) 
         companies = await cursor.to_list(length=100)
         
@@ -536,26 +581,19 @@ async def get_notification_count():
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
-    """
-    Fixes: Blank Graph
-    Reads directly from 'training_rounds' where the aggregator saves data.
-    """
     try:
-        # CORRECTION: Look at 'training_rounds', not 'model_versions'
         cursor = db.training_rounds.find({}).sort("round_number", 1)
         history = await cursor.to_list(length=100)
         
         analytics_data = []
         for entry in history:
             analytics_data.append({
-                # Map the database fields to what the Frontend expects
-                "round": entry.get("round_number", 0),      # DB: round_number -> UI: round
-                "accuracy": entry.get("avg_accuracy", 0),   # DB: avg_accuracy -> UI: accuracy
+                "round": entry.get("round_number", 0),
+                "accuracy": entry.get("avg_accuracy", 0),
                 "loss": entry.get("avg_loss", 0),
                 "timestamp": entry.get("timestamp", "")
             })
             
-        # If no data exists yet, return dummy data to prevent crash
         if not analytics_data:
             return [
                 {"round": 1, "accuracy": 0.65, "loss": 0.80},
@@ -568,16 +606,16 @@ async def get_round_analytics():
     except Exception as e:
         print(f"Error fetching analytics: {e}")
         return []
-@api_router.delete("/reset-system")
+
+# --- RESET BUTTON (Corrected to GET) ---
+@api_router.get("/reset-system") 
 async def reset_database():
     """
     Clears all training history so the graph can start fresh.
     """
-    # Delete all old history that is confusing the graph
     await db.training_rounds.delete_many({})
     await db.gradient_updates.delete_many({})
     
-    # Reset variables
     global CURRENT_ROUND, GLOBAL_MODEL
     CURRENT_ROUND = 0
     GLOBAL_MODEL = create_fraud_detection_model()
@@ -589,7 +627,6 @@ async def reset_database():
 app.include_router(api_router)
 
 # ============= CORS SETUP =============
-# FIXED: Syntax error was here
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
