@@ -144,9 +144,11 @@ class LoginResponse(BaseModel):
     api_key: str
     message: str
 
+# --- UPDATED: Added num_samples for Weighted Averaging ---
 class GradientSubmit(BaseModel):
     gradient_data: str
     metrics: Dict[str, float]
+    num_samples: int = 1  # Default to 1 to prevent crashes if client forgets
 
 class DashboardStats(BaseModel):
     total_companies: int
@@ -192,7 +194,7 @@ def serialize_model_weights(model):
     buffer.seek(0)
     return base64.b64encode(buffer.read()).decode('utf-8')
 
-# --- UPDATED: Safe Deserialization ---
+# --- Safe Deserialization ---
 def deserialize_model_weights(data_str):
     try:
         data = base64.b64decode(data_str)
@@ -204,7 +206,7 @@ def deserialize_model_weights(data_str):
         logger.error(f"❌ Malformed Gradients Detected: {str(e)}")
         return None # Return None on failure so we can skip this update
 
-# --- NEW: Gradient Validation ---
+# --- Gradient Validation ---
 def validate_gradient_shape(decoded_weights, model):
     """
     Security Check: Ensures uploaded gradients match the Global Model's architecture.
@@ -224,13 +226,34 @@ def validate_gradient_shape(decoded_weights, model):
             
     return True
 
-def federated_averaging(gradient_list):
+# --- UPDATED: Weighted Federated Averaging ---
+def federated_averaging(gradient_list, sample_counts):
+    """
+    Performs Weighted Averaging of Gradients.
+    Formula: Sum(Weight_k * n_k) / Sum(n_k)
+    """
     if not gradient_list:
         return None
+        
+    # Calculate weighted average layer by layer
     avg_gradients = []
-    for i in range(len(gradient_list[0])):
-        layer_gradients = [g[i] for g in gradient_list]
-        avg_gradients.append(np.mean(layer_gradients, axis=0))
+    
+    # Iterate through each layer of the model
+    for layer_index in range(len(gradient_list[0])):
+        
+        # Collect this layer's weights from ALL banks
+        layer_weights_across_banks = [g[layer_index] for g in gradient_list]
+        
+        # Use numpy's average with weights parameter
+        # This computes (w1*n1 + w2*n2...) / (n1+n2...)
+        weighted_layer = np.average(
+            layer_weights_across_banks, 
+            axis=0, 
+            weights=sample_counts
+        )
+        
+        avg_gradients.append(weighted_layer)
+        
     return avg_gradients
 
 async def broadcast_notification(title: str, message: str, notification_type: str = "info"):
@@ -251,9 +274,9 @@ async def broadcast_notification(title: str, message: str, notification_type: st
 
 # ============= CORE LOGIC =============
 
-# --- UPDATED: Robust Aggregation ---
+# --- UPDATED: Robust Aggregation with Weighted Avg ---
 async def aggregate_gradients():
-    """Aggregate gradients and update global model with Safety Checks"""
+    """Aggregate gradients using Weighted Averaging"""
     global GLOBAL_MODEL, CURRENT_ROUND, MODEL_VERSION, PREVIOUS_ACCURACY
     
     round_id = f"round_{CURRENT_ROUND}"
@@ -272,6 +295,7 @@ async def aggregate_gradients():
 
     valid_gradients = []
     valid_metrics = []
+    sample_counts = []  # To store the 'n' (dataset size) from each bank
     
     # --- STEP 1: FILTER BAD UPDATES ---
     for update in updates:
@@ -281,6 +305,9 @@ async def aggregate_gradients():
         if weights is not None and validate_gradient_shape(weights, GLOBAL_MODEL):
             valid_gradients.append(weights)
             valid_metrics.append(update['metrics'])
+            # Get count, default to 1 if missing for backward compatibility
+            count = update.get('num_samples', 1)
+            sample_counts.append(count)
         else:
             logger.error(f"⚠️ Dropped corrupt update from Company ID: {update.get('company_id')}")
 
@@ -288,13 +315,14 @@ async def aggregate_gradients():
         logger.error("❌ All updates in this round were corrupt! Aborting aggregation.")
         return {"success": False, "message": "All updates failed validation"}
 
-    # --- STEP 2: FEDERATED AVERAGING ---
-    avg_gradients = federated_averaging(valid_gradients)
+    # --- STEP 2: WEIGHTED FEDERATED AVERAGING ---
+    logger.info(f"⚖️ Aggregating with weights (samples): {sample_counts}")
+    avg_gradients = federated_averaging(valid_gradients, sample_counts)
     
     # Update Model
     GLOBAL_MODEL.set_weights(avg_gradients)
     
-    # Metrics
+    # Metrics (Weighted Average of Accuracy/Loss is also better, but simple mean is fine for display)
     avg_accuracy = np.mean([m.get('accuracy', 0) for m in valid_metrics])
     avg_loss = np.mean([m.get('loss', 0) for m in valid_metrics])
     
@@ -302,7 +330,8 @@ async def aggregate_gradients():
     training_round = {
         "round_id": round_id,
         "round_number": CURRENT_ROUND,
-        "participating_companies": len(valid_gradients), # Only count valid ones
+        "participating_companies": len(valid_gradients), 
+        "total_samples_trained": sum(sample_counts), # Store total data volume
         "avg_accuracy": float(avg_accuracy),
         "avg_loss": float(avg_loss),
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -398,7 +427,7 @@ async def download_model(company: dict = Depends(verify_api_key)):
         "round": CURRENT_ROUND
     }
 
-# --- UPDATED: Secure Submission Endpoint ---
+# --- UPDATED: Secure Submission Endpoint (Captures num_samples) ---
 @api_router.post("/federated/submit-gradients")
 async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depends(verify_api_key)):
     global CURRENT_ROUND
@@ -419,8 +448,9 @@ async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depe
         "round_id": round_id,
         "gradient_data": gradient_submit.gradient_data,
         "metrics": gradient_submit.metrics,
+        "num_samples": gradient_submit.num_samples, # <--- Storing the weight (N)
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": "pending" # New field for safe aggregation
+        "status": "pending" 
     }
     
     await db.gradient_updates.insert_one(gradient_update)
@@ -444,6 +474,7 @@ async def get_dashboard_stats():
         total_updates=total_updates,
         latest_round=latest_round
     )
+
 @app.get("/health")
 async def health_check():
     """
@@ -455,6 +486,7 @@ async def health_check():
         "database": "connected",
         "version": MODEL_VERSION
     }
+
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
     """
