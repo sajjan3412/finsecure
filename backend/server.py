@@ -61,6 +61,30 @@ def create_fraud_detection_model():
     )
     return model
 
+# --- NEW: Server-Side Validator ---
+def evaluate_server_side(model):
+    """
+    The Server generates its own small test set to verify the Global Model.
+    This prevents clients from lying about accuracy (Model Poisoning).
+    """
+    # 1. Generate 200 synthetic test samples (Standard Pattern)
+    # We use fixed seed to ensure the test is fair across rounds
+    np.random.seed(42) 
+    
+    # Generate random features (matches 30-feature vector format)
+    X_test = np.random.randn(200, 30).astype(np.float32)
+    
+    # Logic: If Feature 5 is positive, it's fraud (Matches our synthetic trainer logic)
+    # This allows the server to verify if the model actually learned the pattern
+    y_test = (X_test[:, 5] > 0.5).astype(np.float32)
+    
+    # 2. Test the model
+    # verbose=0 keeps logs clean
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
+    
+    logger.info(f"👨‍⚖️ Server-Side Verification: True Accuracy is {accuracy*100:.2f}%")
+    return float(accuracy), float(loss)
+
 # ============= LIFESPAN MANAGER =============
 
 @asynccontextmanager
@@ -144,7 +168,6 @@ class LoginResponse(BaseModel):
     api_key: str
     message: str
 
-# --- UPDATED: Added num_samples for Weighted Averaging ---
 class GradientSubmit(BaseModel):
     gradient_data: str
     metrics: Dict[str, float]
@@ -226,7 +249,7 @@ def validate_gradient_shape(decoded_weights, model):
             
     return True
 
-# --- UPDATED: Weighted Federated Averaging ---
+# --- Weighted Federated Averaging ---
 def federated_averaging(gradient_list, sample_counts):
     """
     Performs Weighted Averaging of Gradients.
@@ -274,9 +297,9 @@ async def broadcast_notification(title: str, message: str, notification_type: st
 
 # ============= CORE LOGIC =============
 
-# --- UPDATED: Robust Aggregation with Weighted Avg ---
+# --- UPDATED: Robust Aggregation with Verification ---
 async def aggregate_gradients():
-    """Aggregate gradients using Weighted Averaging"""
+    """Aggregate gradients and update global model with Server-Side Verification"""
     global GLOBAL_MODEL, CURRENT_ROUND, MODEL_VERSION, PREVIOUS_ACCURACY
     
     round_id = f"round_{CURRENT_ROUND}"
@@ -294,7 +317,6 @@ async def aggregate_gradients():
     logger.info(f"🔄 Processing {len(updates)} updates for Round {CURRENT_ROUND}")
 
     valid_gradients = []
-    valid_metrics = []
     sample_counts = []  # To store the 'n' (dataset size) from each bank
     
     # --- STEP 1: FILTER BAD UPDATES ---
@@ -304,7 +326,6 @@ async def aggregate_gradients():
         # Check if deserialization worked AND shapes match
         if weights is not None and validate_gradient_shape(weights, GLOBAL_MODEL):
             valid_gradients.append(weights)
-            valid_metrics.append(update['metrics'])
             # Get count, default to 1 if missing for backward compatibility
             count = update.get('num_samples', 1)
             sample_counts.append(count)
@@ -322,18 +343,18 @@ async def aggregate_gradients():
     # Update Model
     GLOBAL_MODEL.set_weights(avg_gradients)
     
-    # Metrics (Weighted Average of Accuracy/Loss is also better, but simple mean is fine for display)
-    avg_accuracy = np.mean([m.get('accuracy', 0) for m in valid_metrics])
-    avg_loss = np.mean([m.get('loss', 0) for m in valid_metrics])
+    # --- STEP 3: SERVER-SIDE VERIFICATION (Trust but Verify) ---
+    # We ignore client metrics for the official record and verify ourselves
+    true_accuracy, true_loss = evaluate_server_side(GLOBAL_MODEL)
     
-    # Save Round
+    # Save Round with TRUE metrics
     training_round = {
         "round_id": round_id,
         "round_number": CURRENT_ROUND,
         "participating_companies": len(valid_gradients), 
         "total_samples_trained": sum(sample_counts), # Store total data volume
-        "avg_accuracy": float(avg_accuracy),
-        "avg_loss": float(avg_loss),
+        "avg_accuracy": float(true_accuracy),  # Verified Accuracy
+        "avg_loss": float(true_loss),          # Verified Loss
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
@@ -346,22 +367,22 @@ async def aggregate_gradients():
     )
     
     # Notification Logic
-    accuracy_improvement = avg_accuracy - PREVIOUS_ACCURACY
+    accuracy_improvement = true_accuracy - PREVIOUS_ACCURACY
     msg_type = "success" if accuracy_improvement > 0 else "info"
     
     await broadcast_notification(
         title="Training Round Complete",
-        message=f"Round {CURRENT_ROUND} done. Valid Updates: {len(valid_gradients)}. Accuracy: {avg_accuracy*100:.2f}%",
+        message=f"Round {CURRENT_ROUND} done. Valid Updates: {len(valid_gradients)}. Server Verified Accuracy: {true_accuracy*100:.2f}%",
         notification_type=msg_type
     )
     
-    PREVIOUS_ACCURACY = avg_accuracy
+    PREVIOUS_ACCURACY = true_accuracy
     CURRENT_ROUND += 1
     
     return {
         "success": True,
         "round_number": CURRENT_ROUND - 1,
-        "avg_accuracy": float(avg_accuracy)
+        "avg_accuracy": float(true_accuracy)
     }
 
 async def auto_aggregate_gradients():
@@ -427,7 +448,7 @@ async def download_model(company: dict = Depends(verify_api_key)):
         "round": CURRENT_ROUND
     }
 
-# --- UPDATED: Secure Submission Endpoint (Captures num_samples) ---
+# --- Secure Submission Endpoint ---
 @api_router.post("/federated/submit-gradients")
 async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depends(verify_api_key)):
     global CURRENT_ROUND
