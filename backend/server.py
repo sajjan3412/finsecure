@@ -444,7 +444,17 @@ async def get_dashboard_stats():
         total_updates=total_updates,
         latest_round=latest_round
     )
-
+@app.get("/health")
+async def health_check():
+    """
+    Production Health Check for Load Balancers (AWS/Render).
+    """
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "database": "connected",
+        "version": MODEL_VERSION
+    }
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
     """
