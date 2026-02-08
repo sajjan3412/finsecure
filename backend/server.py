@@ -99,8 +99,14 @@ async def lifespan(app: FastAPI):
     CURRENT_ROUND = latest_round['round_number'] + 1 if latest_round else 0
     logger.info(f"Starting at Round {CURRENT_ROUND}")
     
-    # Scheduler: Backup check every 30 seconds
-    scheduler.add_job(auto_aggregate_gradients, 'interval', seconds=30, id='auto_aggregate', replace_existing=True)
+    # --- UPDATED SCHEDULER: 2 MINUTES ---
+    scheduler.add_job(
+        auto_aggregate_gradients, 
+        'interval', 
+        minutes=2,  # <--- CHANGED FROM seconds=30 TO minutes=2
+        id='auto_aggregate', 
+        replace_existing=True
+    )
     scheduler.start()
     
     yield
@@ -242,6 +248,7 @@ async def aggregate_gradients() -> Dict[str, Any]:
                 valid_gradients.append(weights)
                 count = max(update.get('num_samples', 1), 1)
                 sample_counts.append(count)
+                
                 metrics = update.get('metrics', {'accuracy': 0, 'loss': 0})
                 weighted_acc_sum += (metrics['accuracy'] * count)
                 weighted_loss_sum += (metrics['loss'] * count)
