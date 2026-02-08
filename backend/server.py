@@ -1,3 +1,4 @@
+from fastapi.responses import PlainTextResponse
 from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -426,11 +427,98 @@ async def force_aggregate():
 
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
-    # Basic script template logic
+    """
+    Generates the Internet Gateway Script as a downloadable file.
+    """
     base_url = str(request.base_url).rstrip('/')
     api_url = f"{base_url}/api"
-    return {"filename": "finsecure_gateway.py", "content": f"# Generated gateway script connected to {api_url}"}
 
+    script_content = f'''#!/usr/bin/env python3
+"""
+FinSecure Gateway Script
+Company: {company['name']}
+Role: Internet Bridge (No Training)
+"""
+import requests
+import json
+import os
+import time
+import sys
+
+# --- CONFIGURATION ---
+API_KEY = "{company['api_key']}"
+BACKEND_URL = "{api_url}"
+EXCHANGE_FOLDER = "./secure_transfer" 
+
+class FederatedGateway:
+    def __init__(self, api_key, backend_url):
+        self.headers = {{"X-API-Key": api_key}}
+        self.backend_url = backend_url
+        self.current_round = -1
+        
+        # Ensure the shared folder exists
+        os.makedirs(EXCHANGE_FOLDER, exist_ok=True)
+        print(f"🌉 Gateway Active | Company: {company['name']}")
+        print(f"📂 Monitoring Folder: {{EXCHANGE_FOLDER}}")
+
+    def run(self):
+        """Main Loop: Syncs data between Internet and Local Folder"""
+        print("⏳ Waiting for updates...")
+        while True:
+            self._sync_downstream() 
+            self._sync_upstream()   
+            time.sleep(5)
+
+    def _sync_downstream(self):
+        """Check Server for new Global Model -> Save to Folder"""
+        try:
+            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                server_round = data.get('round', 0)
+                
+                if server_round > self.current_round:
+                    print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
+                    
+                    filepath = f"{{EXCHANGE_FOLDER}}/global_model.json"
+                    with open(filepath, "w") as f:
+                        json.dump(data, f)
+                    
+                    print(f"    Saved to {{filepath}}")
+                    self.current_round = server_round
+        except Exception as e:
+            print(f"⚠️ Connection Error: {{e}}")
+
+    def _sync_upstream(self):
+        """Check Folder for Gradients -> Upload to Server"""
+        local_file = f"{{EXCHANGE_FOLDER}}/local_gradients.json"
+        
+        if os.path.exists(local_file):
+            print("\\n⬆️  Found local updates. Uploading to server...")
+            try:
+                with open(local_file, "r") as f:
+                    payload = json.load(f)
+                
+                resp = requests.post(
+                    f"{{self.backend_url}}/federated/submit-gradients",
+                    headers=self.headers,
+                    json=payload
+                )
+                
+                if resp.status_code == 200:
+                    print("    ✅ Upload Successful!")
+                    os.remove(local_file) 
+                else:
+                    print(f"    ❌ Upload Failed: {{resp.text}}")
+            except Exception as e:
+                print(f"⚠️ Upload Error: {{e}}")
+
+if __name__ == "__main__":
+    gateway = FederatedGateway(API_KEY, BACKEND_URL)
+    gateway.run()
+'''
+    # RETURN RAW TEXT (Critical for CLI)
+    return PlainTextResponse(script_content, media_type="text/x-python")
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "version": MODEL_VERSION}
