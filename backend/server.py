@@ -38,7 +38,7 @@ GLOBAL_MODEL = None
 MODEL_VERSION = "1.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 1  # Kept at 1 for your Demo to work instantly
+AGGREGATION_THRESHOLD = 1  # Aggregates immediately after 1 update (Demo Mode)
 
 scheduler = AsyncIOScheduler()
 
@@ -50,7 +50,7 @@ def create_fraud_detection_model():
         tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(32, activation='relu'),
-        tf.keras.layers.Dropout(0.2),
+        tf.keras.layers.Dropout(0.2), # Matches Client Architecture
         tf.keras.layers.Dense(16, activation='relu'),
         tf.keras.layers.Dense(1, activation='sigmoid')
     ])
@@ -61,25 +61,21 @@ def create_fraud_detection_model():
     )
     return model
 
-# --- NEW: Server-Side Validator ---
 def evaluate_server_side(model):
     """
     The Server generates its own small test set to verify the Global Model.
     This prevents clients from lying about accuracy (Model Poisoning).
     """
     # 1. Generate 200 synthetic test samples (Standard Pattern)
-    # We use fixed seed to ensure the test is fair across rounds
     np.random.seed(42) 
     
     # Generate random features (matches 30-feature vector format)
     X_test = np.random.randn(200, 30).astype(np.float32)
     
     # Logic: If Feature 5 is positive, it's fraud (Matches our synthetic trainer logic)
-    # This allows the server to verify if the model actually learned the pattern
     y_test = (X_test[:, 5] > 0.5).astype(np.float32)
     
     # 2. Test the model
-    # verbose=0 keeps logs clean
     loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
     
     logger.info(f"👨‍⚖️ Server-Side Verification: True Accuracy is {accuracy*100:.2f}%")
@@ -108,16 +104,16 @@ async def lifespan(app: FastAPI):
         CURRENT_ROUND = 0
         logger.info("No previous history found. Starting at Round 0")
 
-    # 3. Start Scheduler
+    # 3. Start Scheduler (Backup trigger every 30 seconds)
     scheduler.add_job(
         auto_aggregate_gradients,
         'interval',
-        minutes=5,
+        seconds=30, # <--- FIXED: Faster backup check
         id='auto_aggregate',
         replace_existing=True
     )
     scheduler.start()
-    logger.info("Scheduler started.")
+    logger.info("Scheduler started (30s interval).")
     
     yield
     
@@ -171,7 +167,7 @@ class LoginResponse(BaseModel):
 class GradientSubmit(BaseModel):
     gradient_data: str
     metrics: Dict[str, float]
-    num_samples: int = 1  # Default to 1 to prevent crashes if client forgets
+    num_samples: int = 1 
 
 class DashboardStats(BaseModel):
     total_companies: int
@@ -227,7 +223,7 @@ def deserialize_model_weights(data_str):
         return weights
     except Exception as e:
         logger.error(f"❌ Malformed Gradients Detected: {str(e)}")
-        return None # Return None on failure so we can skip this update
+        return None 
 
 # --- Gradient Validation ---
 def validate_gradient_shape(decoded_weights, model):
@@ -258,7 +254,6 @@ def federated_averaging(gradient_list, sample_counts):
     if not gradient_list:
         return None
         
-    # Calculate weighted average layer by layer
     avg_gradients = []
     
     # Iterate through each layer of the model
@@ -268,7 +263,6 @@ def federated_averaging(gradient_list, sample_counts):
         layer_weights_across_banks = [g[layer_index] for g in gradient_list]
         
         # Use numpy's average with weights parameter
-        # This computes (w1*n1 + w2*n2...) / (n1+n2...)
         weighted_layer = np.average(
             layer_weights_across_banks, 
             axis=0, 
@@ -344,7 +338,6 @@ async def aggregate_gradients():
     GLOBAL_MODEL.set_weights(avg_gradients)
     
     # --- STEP 3: SERVER-SIDE VERIFICATION (Trust but Verify) ---
-    # We ignore client metrics for the official record and verify ourselves
     true_accuracy, true_loss = evaluate_server_side(GLOBAL_MODEL)
     
     # Save Round with TRUE metrics
@@ -448,16 +441,14 @@ async def download_model(company: dict = Depends(verify_api_key)):
         "round": CURRENT_ROUND
     }
 
-# --- Secure Submission Endpoint ---
+# --- Secure Submission Endpoint (INSTANT AGGREGATION ENABLED) ---
 @api_router.post("/federated/submit-gradients")
 async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depends(verify_api_key)):
     global CURRENT_ROUND
     
-    # 1. Input Sanitation
     if not (0 <= gradient_submit.metrics.get('accuracy', 0) <= 1):
-        raise HTTPException(status_code=400, detail="Invalid Accuracy Metric (Must be 0-1)")
+        raise HTTPException(status_code=400, detail="Invalid Accuracy Metric")
 
-    # 2. Basic Validation
     if not gradient_submit.gradient_data:
          raise HTTPException(status_code=400, detail="Empty Gradient Data")
 
@@ -469,13 +460,24 @@ async def submit_gradients(gradient_submit: GradientSubmit, company: dict = Depe
         "round_id": round_id,
         "gradient_data": gradient_submit.gradient_data,
         "metrics": gradient_submit.metrics,
-        "num_samples": gradient_submit.num_samples, # <--- Storing the weight (N)
+        "num_samples": gradient_submit.num_samples,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "pending" 
     }
     
     await db.gradient_updates.insert_one(gradient_update)
-    return {"success": True, "round_id": round_id, "message": "Gradients accepted for processing"}
+
+    # --- THE FIX: INSTANT TRIGGER ---
+    pending_count = await db.gradient_updates.count_documents({
+        "round_id": round_id, 
+        "status": "pending"
+    })
+    
+    if pending_count >= AGGREGATION_THRESHOLD:
+        print(f"🚀 Threshold met ({pending_count} updates). Triggering Aggregation INSTANTLY!")
+        await aggregate_gradients() # Runs logic immediately
+        
+    return {"success": True, "round_id": round_id, "message": "Gradients accepted & Processed"}
 
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
 async def get_dashboard_stats():
@@ -670,7 +672,7 @@ async def get_round_analytics():
         print(f"Error fetching analytics: {e}")
         return []
 
-# --- RESET BUTTON (Corrected to GET) ---
+# --- RESET BUTTON ---
 @api_router.get("/reset-system") 
 async def reset_database():
     """
@@ -685,6 +687,13 @@ async def reset_database():
     
     print("♻️ SYSTEM RESET: Graph is now empty and ready.")
     return {"message": "System Reset Successful!"}
+
+# --- FORCE AGGREGATE BUTTON ---
+@api_router.get("/force-aggregate")
+async def force_aggregate():
+    """Manually trigger aggregation for Demo"""
+    result = await aggregate_gradients()
+    return result
 
 # Include API Router
 app.include_router(api_router)
