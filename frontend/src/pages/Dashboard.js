@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X } from 'lucide-react';
+import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X, Terminal } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,22 +10,27 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { toast } from 'sonner';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://finsecure-ochi.onrender.com';
 const API = `${BACKEND_URL}/api`;
 
 const Dashboard = () => {
   const [apiKey, setApiKey] = useState(localStorage.getItem('finsecure_api_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  
+  // Dashboard Data State
   const [dashboardStats, setDashboardStats] = useState(null);
   const [trainingRounds, setTrainingRounds] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [companyInfo, setCompanyInfo] = useState(null);
+  
+  // Notification State
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
 
+  // Initial Check
   useEffect(() => {
     if (apiKey) {
       verifyApiKey();
@@ -33,15 +38,19 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Polling Logic (Live Updates)
   useEffect(() => {
     if (authenticated) {
-      // Poll for notifications every 30 seconds
+      loadDashboardData(); // Initial load
+      
+      // Poll every 5 seconds for LIVE graph updates
       const interval = setInterval(() => {
         loadNotifications();
-      }, 30000);
+        loadDashboardData(true); // silent refresh
+      }, 5000); 
+
       return () => clearInterval(interval);
     }
-    // Add this line below to ignore the warning:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated]);
 
@@ -52,56 +61,47 @@ const Dashboard = () => {
       });
       setAuthenticated(true);
       setCompanyInfo(response.data);
-      loadDashboardData();
       toast.success('Connected successfully!');
     } catch (error) {
-      toast.error('Invalid API key');
+      console.error(error);
+      if (!authenticated) toast.error('Invalid API key');
       setAuthenticated(false);
     }
   };
 
-  const loadDashboardData = async () => {
-    setLoading(true);
+  const loadDashboardData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [statsRes, roundsRes, companiesRes] = await Promise.all([
-        axios.get(`${API}/analytics/dashboard`),
-        axios.get(`${API}/analytics/rounds`),
-        axios.get(`${API}/companies`)
+        axios.get(`${API}/analytics/dashboard`, { headers: { 'X-API-Key': apiKey } }),
+        axios.get(`${API}/analytics/rounds`, { headers: { 'X-API-Key': apiKey } }),
+        axios.get(`${API}/companies`, { headers: { 'X-API-Key': apiKey } })
       ]);
       
       setDashboardStats(statsRes.data);
       setTrainingRounds(roundsRes.data);
       setCompanies(companiesRes.data);
-      
-      // Load notifications
-      await loadNotifications();
     } catch (error) {
-      toast.error('Failed to load dashboard data');
+      console.error('Failed to load dashboard data', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   const loadNotifications = async () => {
     try {
       const [notifRes, countRes] = await Promise.all([
-        axios.get(`${API}/notifications`, {
-          headers: { 'X-API-Key': apiKey }
-        }),
-        axios.get(`${API}/notifications/unread/count`, {
-          headers: { 'X-API-Key': apiKey }
-        })
+        axios.get(`${API}/notifications`, { headers: { 'X-API-Key': apiKey } }),
+        axios.get(`${API}/notifications/unread/count`, { headers: { 'X-API-Key': apiKey } })
       ]);
       
       setNotifications(notifRes.data);
-      setUnreadCount(countRes.data.unread_count);
+      setUnreadCount(countRes.data.count || 0);
       
-      // Show toast for new unread notifications
-      const newUnread = notifRes.data.filter(n => !n.read);
-      if (newUnread.length > 0 && newUnread[0].type === 'success') {
-        toast.success(newUnread[0].title, {
-          description: newUnread[0].message
-        });
+      // Toast for new high-priority alerts
+      const newSuccess = notifRes.data.find(n => !n.read && n.type === 'success');
+      if (newSuccess) {
+         // Optional: mark as read locally so we don't spam toasts
       }
     } catch (error) {
       console.error('Failed to load notifications:', error);
@@ -109,21 +109,9 @@ const Dashboard = () => {
   };
 
   const markAsRead = async (notificationId) => {
-    try {
-      await axios.post(
-        `${API}/notifications/${notificationId}/read`,
-        {},
-        { headers: { 'X-API-Key': apiKey } }
-      );
-      
-      // Update local state
-      setNotifications(notifications.map(n => 
-        n.notification_id === notificationId ? { ...n, read: true } : n
-      ));
-      setUnreadCount(Math.max(0, unreadCount - 1));
-    } catch (error) {
-      console.error('Failed to mark as read:', error);
-    }
+    // Optimistic update
+    setNotifications(prev => prev.map(n => n.notification_id === notificationId ? { ...n, read: true } : n));
+    setUnreadCount(Math.max(0, unreadCount - 1));
   };
 
   const handleConnect = () => {
@@ -137,37 +125,31 @@ const Dashboard = () => {
         headers: { 'X-API-Key': apiKey }
       });
       
-      if (!response.data || !response.data.content || !response.data.filename) {
-        throw new Error('Invalid response from server');
-      }
-      
-      // Create blob and download
       const blob = new Blob([response.data.content], { type: 'text/x-python' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = url;
-      a.download = response.data.filename;
+      a.download = response.data.filename || 'finsecure_gateway.py';
       document.body.appendChild(a);
       a.click();
       
-      // Cleanup
       setTimeout(() => {
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
       }, 100);
       
-      toast.success(`Downloaded: ${response.data.filename}`);
+      toast.success('Script downloaded successfully');
     } catch (error) {
       console.error('Download error:', error);
-      toast.error(error.response?.data?.detail || 'Failed to download script. Please try again.');
+      toast.error('Failed to download script');
     }
   };
 
-  // Login Screen
+  // --- RENDER: LOGIN ---
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4" data-testid="dashboard-login">
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4">
         <motion.div
           className="bg-[#0A0A0A] border border-white/10 rounded-xl p-8 max-w-md w-full"
           initial={{ opacity: 0, y: 20 }}
@@ -177,9 +159,7 @@ const Dashboard = () => {
             <ShieldCheck className="w-10 h-10 text-indigo-500" />
             <h1 className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>FinSecure Dashboard</h1>
           </div>
-          <p className="text-[#A1A1AA] mb-6" style={{ fontFamily: 'IBM Plex Sans, sans-serif' }}>
-            Enter your API key to access the federated learning dashboard.
-          </p>
+          <p className="text-[#A1A1AA] mb-6">Enter your API key to access the federated learning network.</p>
           <div className="space-y-4">
             <div>
               <label className="block text-sm mb-2 text-[#A1A1AA]">API Key</label>
@@ -187,17 +167,12 @@ const Dashboard = () => {
                 type={showApiKey ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                className="bg-[#050505] border-white/10 focus:border-indigo-500 rounded-md h-10"
+                className="bg-[#050505] border-white/10 focus:border-indigo-500"
                 placeholder="fs_xxxxxxxxxxxxx"
-                data-testid="api-key-input"
               />
             </div>
-            <Button
-              onClick={handleConnect}
-              className="w-full h-10 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white"
-              data-testid="connect-btn"
-            >
-              Connect
+            <Button onClick={handleConnect} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
+              Connect Securely
             </Button>
           </div>
         </motion.div>
@@ -205,284 +180,249 @@ const Dashboard = () => {
     );
   }
 
-  // Dashboard Screen
+  // --- RENDER: DASHBOARD ---
   return (
-    <div className="min-h-screen bg-[#050505] text-[#EDEDED]" data-testid="dashboard-main">
+    <div className="min-h-screen bg-[#050505] text-[#EDEDED]">
       {/* Header */}
-      <div className="border-b border-white/5 bg-[#0A0A0A]">
+      <div className="border-b border-white/5 bg-[#0A0A0A] sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <ShieldCheck className="w-8 h-8 text-indigo-500" />
             <div>
               <h1 className="text-xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>FinSecure</h1>
-              {companyInfo && (
-                <p className="text-xs text-[#A1A1AA]">{companyInfo.name}</p>
-              )}
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                <p className="text-xs text-[#A1A1AA]">Network Online • {companyInfo?.name}</p>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Button
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="h-9 w-9 p-0 rounded-md bg-white/5 hover:bg-white/10 text-white border border-white/10 relative"
-                data-testid="notifications-btn"
-              >
-                <Bell className="w-4 h-4" />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                    {unreadCount}
-                  </span>
-                )}
-              </Button>
-              
-              {/* Notifications Dropdown */}
-              <AnimatePresence>
-                {showNotifications && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute right-0 top-12 w-96 bg-[#0A0A0A] border border-white/10 rounded-lg shadow-xl z-50"
-                    data-testid="notifications-dropdown"
-                  >
-                    <div className="p-4 border-b border-white/10 flex justify-between items-center">
-                      <h3 className="font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>Notifications</h3>
-                      <Button
-                        onClick={() => setShowNotifications(false)}
-                        className="h-6 w-6 p-0 bg-transparent hover:bg-white/5"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <div className="max-h-96 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <div className="p-8 text-center text-[#A1A1AA]">
-                          <Bell className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                          <p>No notifications yet</p>
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-white/5">
-                          {notifications.map((notif) => (
-                            <div
-                              key={notif.notification_id}
-                              className={`p-4 hover:bg-white/5 cursor-pointer transition-colors ${
-                                !notif.read ? 'bg-indigo-500/5' : ''
-                              }`}
-                              onClick={() => markAsRead(notif.notification_id)}
-                              data-testid={`notification-${notif.notification_id}`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <p className="font-medium text-sm">{notif.title}</p>
-                                    {!notif.read && (
-                                      <span className="w-2 h-2 bg-indigo-500 rounded-full"></span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-[#A1A1AA]">{notif.message}</p>
-                                  <p className="text-xs text-[#A1A1AA] mt-1">
-                                    {new Date(notif.created_at).toLocaleString()}
-                                  </p>
-                                </div>
-                                <Badge
-                                  className={`text-xs ${
-                                    notif.type === 'success'
-                                      ? 'bg-emerald-500/20 text-emerald-500'
-                                      : notif.type === 'error'
-                                      ? 'bg-rose-500/20 text-rose-500'
-                                      : 'bg-indigo-500/20 text-indigo-500'
-                                  }`}
-                                >
-                                  {notif.type}
-                                </Badge>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-            
+          
+          <div className="relative">
             <Button
-              onClick={downloadClientScript}
-              className="h-9 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-sm"
-              data-testid="download-client-btn"
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="h-9 w-9 p-0 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 relative"
             >
-              <Download className="w-4 h-4 mr-2" />
-              Download Client
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                  {unreadCount}
+                </span>
+              )}
             </Button>
+
+            <AnimatePresence>
+              {showNotifications && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute right-0 top-12 w-96 bg-[#0A0A0A] border border-white/10 rounded-lg shadow-2xl z-50"
+                >
+                  <div className="p-3 border-b border-white/10 flex justify-between items-center">
+                    <h3 className="font-bold text-sm">Notifications</h3>
+                    <Button onClick={() => setShowNotifications(false)} variant="ghost" size="icon" className="h-6 w-6">
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-6 text-center text-sm text-[#A1A1AA]">No new alerts</div>
+                    ) : (
+                      notifications.map((notif) => (
+                        <div
+                          key={notif.notification_id}
+                          className={`p-3 border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors ${!notif.read ? 'bg-indigo-500/5' : ''}`}
+                          onClick={() => markAsRead(notif.notification_id)}
+                        >
+                          <div className="flex justify-between items-start mb-1">
+                            <span className="font-semibold text-sm">{notif.title}</span>
+                            <span className="text-[10px] text-[#A1A1AA]">{new Date(notif.created_at).toLocaleTimeString()}</span>
+                          </div>
+                          <p className="text-xs text-[#A1A1AA] line-clamp-2">{notif.message}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Stats Grid */}
+        {/* Statistics Cards */}
         {dashboardStats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <Card className="rounded-lg bg-[#121212] border border-white/5 p-4" data-testid="stat-companies">
-              <div className="flex items-center justify-between mb-2">
+            <Card className="bg-[#121212] border-white/5 p-4 hover:border-indigo-500/50 transition-colors">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Active Nodes</p>
+                  <h3 className="text-2xl font-bold font-mono">{dashboardStats.active_companies}</h3>
+                </div>
                 <Network className="w-5 h-5 text-indigo-500" />
-                <span className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                  {dashboardStats.active_companies}
-                </span>
               </div>
-              <p className="text-sm text-[#A1A1AA]">Active Companies</p>
             </Card>
-
-            <Card className="rounded-lg bg-[#121212] border border-white/5 p-4" data-testid="stat-rounds">
-              <div className="flex items-center justify-between mb-2">
+            
+            <Card className="bg-[#121212] border-white/5 p-4 hover:border-emerald-500/50 transition-colors">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Global Rounds</p>
+                  <h3 className="text-2xl font-bold font-mono">{dashboardStats.total_rounds}</h3>
+                </div>
                 <Activity className="w-5 h-5 text-emerald-500" />
-                <span className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                  {dashboardStats.total_rounds}
-                </span>
               </div>
-              <p className="text-sm text-[#A1A1AA]">Training Rounds</p>
             </Card>
 
-            <Card className="rounded-lg bg-[#121212] border border-white/5 p-4" data-testid="stat-accuracy">
-              <div className="flex items-center justify-between mb-2">
+            <Card className="bg-[#121212] border-white/5 p-4 hover:border-rose-500/50 transition-colors">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Network Accuracy</p>
+                  <h3 className="text-2xl font-bold font-mono">{(dashboardStats.current_accuracy * 100).toFixed(1)}%</h3>
+                </div>
                 <BrainCircuit className="w-5 h-5 text-rose-500" />
-                <span className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                  {(dashboardStats.current_accuracy * 100).toFixed(1)}%
-                </span>
               </div>
-              <p className="text-sm text-[#A1A1AA]">Model Accuracy</p>
             </Card>
 
-            <Card className="rounded-lg bg-[#121212] border border-white/5 p-4" data-testid="stat-updates">
-              <div className="flex items-center justify-between mb-2">
-                <ShieldCheck className="w-5 h-5 text-indigo-500" />
-                <span className="text-2xl font-bold" style={{ fontFamily: 'Chivo, sans-serif' }}>
-                  {dashboardStats.total_updates}
-                </span>
+            <Card className="bg-[#121212] border-white/5 p-4 hover:border-amber-500/50 transition-colors">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Total Updates</p>
+                  <h3 className="text-2xl font-bold font-mono">{dashboardStats.total_updates}</h3>
+                </div>
+                <ShieldCheck className="w-5 h-5 text-amber-500" />
               </div>
-              <p className="text-sm text-[#A1A1AA]">Gradient Updates</p>
             </Card>
           </div>
         )}
 
-        {/* Tabs */}
+        {/* Main Content Tabs */}
         <Tabs defaultValue="overview" className="w-full">
           <TabsList className="bg-[#0A0A0A] border border-white/5 mb-6">
-            <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-            <TabsTrigger value="companies" data-testid="tab-companies">Companies</TabsTrigger>
-            <TabsTrigger value="setup" data-testid="tab-setup">Client Setup</TabsTrigger>
+            <TabsTrigger value="overview">Live Analytics</TabsTrigger>
+            <TabsTrigger value="companies">Network Nodes</TabsTrigger>
+            <TabsTrigger value="setup">Client Setup</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" data-testid="overview-tab-content">
+          {/* TAB 1: OVERVIEW (GRAPH) */}
+          <TabsContent value="overview">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
-              <h3 className="text-xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Model Performance Over Time</h3>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold">Global Model Accuracy</h3>
+                <Badge variant="outline" className="border-indigo-500 text-indigo-400">Live Feed</Badge>
+              </div>
+              
               {trainingRounds.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={trainingRounds}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                    
-                    {/* FIXED: XAxis now uses "round" instead of "round_number" */}
-                    <XAxis 
-                      dataKey="round" 
-                      stroke="#A1A1AA"
-                      label={{ value: 'Training Round', position: 'insideBottom', offset: -5, fill: '#A1A1AA' }}
-                    />
-                    
-                    <YAxis 
-                      stroke="#A1A1AA"
-                      label={{ value: 'Accuracy', angle: -90, position: 'insideLeft', fill: '#A1A1AA' }}
-                    />
-                    
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#121212', border: '1px solid #333' }}
-                      labelStyle={{ color: '#EDEDED' }}
-                    />
-                    
-                    {/* FIXED: Line now uses "accuracy" instead of "avg_accuracy" */}
-                    <Line 
-                      type="monotone" 
-                      dataKey="accuracy" 
-                      stroke="#6366F1" 
-                      strokeWidth={2}
-                      dot={{ fill: '#6366F1' }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                <div className="h-[350px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart 
+                      data={trainingRounds.slice(-20)} // <--- FIXED: Shows only last 20 rounds to prevent squishing
+                      margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                      <XAxis 
+                        dataKey="round" 
+                        stroke="#525252" 
+                        tick={{fill: '#A1A1AA', fontSize: 12}}
+                        tickLine={false}
+                        axisLine={false}
+                        label={{ value: 'Round', position: 'insideBottom', offset: -5, fill: '#525252' }}
+                      />
+                      <YAxis 
+                        stroke="#525252" 
+                        tick={{fill: '#A1A1AA', fontSize: 12}}
+                        tickLine={false}
+                        axisLine={false}
+                        domain={[0, 1]}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '8px' }}
+                        itemStyle={{ color: '#E5E5E5' }}
+                        labelStyle={{ color: '#A1A1AA', marginBottom: '4px' }}
+                        formatter={(value) => [`${(value * 100).toFixed(2)}%`, 'Accuracy']}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="accuracy" 
+                        stroke="#6366F1" 
+                        strokeWidth={3} 
+                        dot={{ r: 4, fill: '#1E1B4B', strokeWidth: 2, stroke: '#6366F1' }} 
+                        activeDot={{ r: 6, fill: '#818CF8' }}
+                        animationDuration={1000}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               ) : (
-                <div className="text-center py-20 text-[#A1A1AA]">
-                  <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No training rounds yet. Upload your first gradient updates to see progress.</p>
+                <div className="flex flex-col items-center justify-center h-[300px] text-[#525252]">
+                  <Activity className="w-12 h-12 mb-4 opacity-20" />
+                  <p>Waiting for first training round...</p>
                 </div>
               )}
             </Card>
           </TabsContent>
 
-          <TabsContent value="companies" data-testid="companies-tab-content">
+          {/* TAB 2: COMPANIES */}
+          <TabsContent value="companies">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
-              <h3 className="text-xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Registered Companies</h3>
-              <div className="space-y-3">
+              <h3 className="text-xl font-bold mb-6">Connected Banks</h3>
+              <div className="grid gap-3">
                 {companies.map((company, idx) => (
-                  <div 
-                    key={idx}
-                    className="bg-[#121212] border border-white/5 rounded-lg p-4 flex justify-between items-center"
-                    data-testid={`company-item-${idx}`}
-                  >
-                    <div>
-                      <p className="font-medium" style={{ fontFamily: 'IBM Plex Sans, sans-serif' }}>{company.name}</p>
-                      <p className="text-sm text-[#A1A1AA]">{company.email}</p>
+                  <div key={idx} className="bg-[#121212] border border-white/5 rounded-lg p-4 flex justify-between items-center hover:bg-[#171717] transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-500 font-bold">
+                        {company.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-medium text-[#EDEDED]">{company.name}</p>
+                        <p className="text-xs text-[#737373]">{company.email}</p>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-3 py-1 rounded-full ${
-                        company.status === 'active' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-gray-500/20 text-gray-500'
-                      }`}>
-                        {company.status}
-                      </span>
-                    </div>
+                    <Badge className="bg-emerald-500/10 text-emerald-500 border-0">Active Node</Badge>
                   </div>
                 ))}
               </div>
             </Card>
           </TabsContent>
 
-          <TabsContent value="setup" data-testid="setup-tab-content">
+          {/* TAB 3: SETUP */}
+          <TabsContent value="setup">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
-              <h3 className="text-xl font-bold mb-6" style={{ fontFamily: 'Chivo, sans-serif' }}>Client Setup Guide</h3>
-              
-              <div className="space-y-6">
-                <div>
-                  <h4 className="font-bold mb-3 text-emerald-500">Step 1: Download Client Script</h4>
-                  <Button
-                    onClick={downloadClientScript}
-                    className="h-10 px-6 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white"
-                    data-testid="download-script-btn"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Download Python Script
-                  </Button>
-                </div>
-
-                <div>
-                  <h4 className="font-bold mb-3 text-emerald-500">Step 2: Install Dependencies</h4>
-                  <div className="bg-[#050505] border border-white/10 rounded-lg p-4">
-                    <code className="text-sm" style={{ fontFamily: 'JetBrains Mono, monospace', color: '#10B981' }}>
-                      pip install tensorflow numpy requests
-                    </code>
+              <h3 className="text-xl font-bold mb-6">Client Configuration</h3>
+              <div className="space-y-8">
+                
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">1</div>
+                  <div className="flex-1">
+                    <h4 className="font-bold mb-2">Download Gateway Script</h4>
+                    <p className="text-sm text-[#A1A1AA] mb-4">This script acts as the secure bridge between your local data and the global model.</p>
+                    <Button onClick={downloadClientScript} variant="outline" className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-950/30">
+                      <Download className="w-4 h-4 mr-2" />
+                      finsecure_gateway.py
+                    </Button>
                   </div>
                 </div>
 
-                <div>
-                  <h4 className="font-bold mb-3 text-emerald-500">Step 3: Run the Script</h4>
-                  <div className="bg-[#050505] border border-white/10 rounded-lg p-4">
-                    <code className="text-sm" style={{ fontFamily: 'JetBrains Mono, monospace', color: '#10B981' }}>
-                      python sentinel_client_xxxxx.py
-                    </code>
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">2</div>
+                  <div className="flex-1">
+                    <h4 className="font-bold mb-2">Install Libraries</h4>
+                    <div className="bg-black/50 border border-white/10 rounded-md p-3 font-mono text-sm text-emerald-400">
+                      pip install tensorflow requests numpy pandas
+                    </div>
                   </div>
                 </div>
 
-                <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-4">
-                  <p className="text-sm text-rose-400">
-                    <strong>Important:</strong> The client script trains locally on your transaction data and only shares gradient updates. Your raw data never leaves your infrastructure.
-                  </p>
+                <div className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">3</div>
+                  <div className="flex-1">
+                    <h4 className="font-bold mb-2">Run the Node</h4>
+                    <div className="bg-black/50 border border-white/10 rounded-md p-3 font-mono text-sm text-emerald-400">
+                      python universal_bank_node.py
+                    </div>
+                  </div>
                 </div>
+
               </div>
             </Card>
           </TabsContent>
