@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X, Terminal } from 'lucide-react';
+import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X, Terminal, Copy, Check } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { toast } from 'sonner';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://finsecure-ochi.onrender.com';
+// Ensure no double slashes in URL
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || 'https://finsecure-ochi.onrender.com').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
 
 const Dashboard = () => {
@@ -24,6 +25,7 @@ const Dashboard = () => {
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [companyInfo, setCompanyInfo] = useState(null);
+  const [copied, setCopied] = useState(false);
   
   // Notification State
   const [notifications, setNotifications] = useState([]);
@@ -38,17 +40,14 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Polling Logic (Live Updates)
+  // Polling Logic
   useEffect(() => {
     if (authenticated) {
-      loadDashboardData(); // Initial load
-      
-      // Poll every 5 seconds for LIVE graph updates
+      loadDashboardData(); 
       const interval = setInterval(() => {
         loadNotifications();
-        loadDashboardData(true); // silent refresh
+        loadDashboardData(true);
       }, 5000); 
-
       return () => clearInterval(interval);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,22 +93,14 @@ const Dashboard = () => {
         axios.get(`${API}/notifications`, { headers: { 'X-API-Key': apiKey } }),
         axios.get(`${API}/notifications/unread/count`, { headers: { 'X-API-Key': apiKey } })
       ]);
-      
       setNotifications(notifRes.data);
       setUnreadCount(countRes.data.count || 0);
-      
-      // Toast for new high-priority alerts
-      const newSuccess = notifRes.data.find(n => !n.read && n.type === 'success');
-      if (newSuccess) {
-         // Optional: mark as read locally so we don't spam toasts
-      }
     } catch (error) {
       console.error('Failed to load notifications:', error);
     }
   };
 
   const markAsRead = async (notificationId) => {
-    // Optimistic update
     setNotifications(prev => prev.map(n => n.notification_id === notificationId ? { ...n, read: true } : n));
     setUnreadCount(Math.max(0, unreadCount - 1));
   };
@@ -119,31 +110,11 @@ const Dashboard = () => {
     verifyApiKey();
   };
 
-  const downloadClientScript = async () => {
-    try {
-      const response = await axios.get(`${API}/client/script`, {
-        headers: { 'X-API-Key': apiKey }
-      });
-      
-      const blob = new Blob([response.data.content], { type: 'text/x-python' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
-      a.download = response.data.filename || 'finsecure_gateway.py';
-      document.body.appendChild(a);
-      a.click();
-      
-      setTimeout(() => {
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-      }, 100);
-      
-      toast.success('Script downloaded successfully');
-    } catch (error) {
-      console.error('Download error:', error);
-      toast.error('Failed to download script');
-    }
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    toast.success('Command copied to clipboard!');
+    setTimeout(() => setCopied(false), 2000);
   };
 
   // --- RENDER: LOGIN ---
@@ -316,7 +287,7 @@ const Dashboard = () => {
                 <div className="h-[350px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart 
-                      data={trainingRounds.slice(-20)} // <--- FIXED: Shows only last 20 rounds to prevent squishing
+                      data={trainingRounds.slice(-20)}
                       margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
@@ -385,21 +356,30 @@ const Dashboard = () => {
             </Card>
           </TabsContent>
 
-          {/* TAB 3: SETUP */}
+          {/* TAB 3: SETUP - NEW CLI VERSION */}
           <TabsContent value="setup">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
-              <h3 className="text-xl font-bold mb-6">Client Configuration</h3>
+              <h3 className="text-xl font-bold mb-6">Client Configuration (CLI)</h3>
               <div className="space-y-8">
                 
                 <div className="flex gap-4">
                   <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">1</div>
                   <div className="flex-1">
-                    <h4 className="font-bold mb-2">Download Gateway Script</h4>
-                    <p className="text-sm text-[#A1A1AA] mb-4">This script acts as the secure bridge between your local data and the global model.</p>
-                    <Button onClick={downloadClientScript} variant="outline" className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-950/30">
-                      <Download className="w-4 h-4 mr-2" />
-                      finsecure_gateway.py
-                    </Button>
+                    <h4 className="font-bold mb-2">Install Gateway</h4>
+                    <p className="text-sm text-[#A1A1AA] mb-3">Copy and run this command in your terminal to install the gateway script:</p>
+                    
+                    <div className="bg-[#050505] border border-white/10 rounded-lg p-4 relative group">
+                      <code className="text-sm font-mono text-emerald-400 block break-all pr-10">
+                        curl -H "X-API-Key: {apiKey}" -o finsecure_gateway.py {API}/client/script
+                      </code>
+                      <Button 
+                        onClick={() => copyToClipboard(`curl -H "X-API-Key: ${apiKey}" -o finsecure_gateway.py ${API}/client/script`)}
+                        className="absolute top-2 right-2 h-8 w-8 p-0 bg-white/5 hover:bg-white/10"
+                        variant="ghost"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 text-[#A1A1AA]" />}
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -407,7 +387,7 @@ const Dashboard = () => {
                   <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">2</div>
                   <div className="flex-1">
                     <h4 className="font-bold mb-2">Install Libraries</h4>
-                    <div className="bg-black/50 border border-white/10 rounded-md p-3 font-mono text-sm text-emerald-400">
+                    <div className="bg-[#050505] border border-white/10 rounded-lg p-3 font-mono text-sm text-[#A1A1AA]">
                       pip install tensorflow requests numpy pandas
                     </div>
                   </div>
@@ -417,7 +397,7 @@ const Dashboard = () => {
                   <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 font-bold text-sm">3</div>
                   <div className="flex-1">
                     <h4 className="font-bold mb-2">Run the Node</h4>
-                    <div className="bg-black/50 border border-white/10 rounded-md p-3 font-mono text-sm text-emerald-400">
+                    <div className="bg-[#050505] border border-white/10 rounded-lg p-3 font-mono text-sm text-[#A1A1AA]">
                       python universal_bank_node.py
                     </div>
                   </div>
