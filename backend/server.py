@@ -404,9 +404,13 @@ async def get_dashboard_stats():
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
-    history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", 1).to_list(100)
+    # 1. Fetch the NEWEST 100 rounds (Sort Descending: -1)
+    history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", -1).to_list(100)
+    
+    # 2. Reverse them back to Chronological Order (Ascending) for the graph
+    history.reverse() 
+    
     return [{"round": e.get("round_number", 0), "accuracy": e.get("avg_accuracy", 0), "loss": e.get("avg_loss", 0), "timestamp": e.get("timestamp", "")} for e in history] or [{"round": 1, "accuracy": 0.65, "loss": 0.80}]
-
 @api_router.get("/reset-system")
 async def reset_database():
     await db.training_rounds.delete_many({})
