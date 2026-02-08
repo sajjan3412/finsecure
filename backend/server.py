@@ -100,10 +100,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting at Round {CURRENT_ROUND}")
     
     # --- UPDATED SCHEDULER: 2 MINUTES ---
+    # Since we removed the "Instant Trigger", this is now the ONLY way updates happen.
     scheduler.add_job(
         auto_aggregate_gradients, 
         'interval', 
-        minutes=2,  # <--- CHANGED FROM seconds=30 TO minutes=2
+        minutes=2,  
         id='auto_aggregate', 
         replace_existing=True
     )
@@ -234,8 +235,9 @@ async def aggregate_gradients() -> Dict[str, Any]:
         round_id = f"round_{CURRENT_ROUND}"
         updates = await db.gradient_updates.find({"round_id": round_id, "status": "pending"}, {"_id": 0}).to_list(1000)
         
-        if not updates or len(updates) < AGGREGATION_THRESHOLD:
-            return {"success": False, "message": f"Waiting for updates"}
+        # Don't aggregate if nothing is pending
+        if not updates:
+            return {"success": False, "message": "No pending updates"}
         
         logger.info(f"Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
         
@@ -384,11 +386,9 @@ async def submit_gradients(gradient_submit: GradientSubmit, request: Request, co
     }
     await db.gradient_updates.insert_one(update)
     
-    # Instant Trigger
-    pending_count = await db.gradient_updates.count_documents({"round_id": round_id, "status": "pending"})
-    if pending_count >= AGGREGATION_THRESHOLD:
-        logger.info(f"Threshold met ({pending_count}). Aggregating instantly.")
-        await aggregate_gradients()
+    # --- INSTANT TRIGGER REMOVED ---
+    # The system will now ONLY update via the 2-minute scheduler.
+    logger.info(f"Update received from {company['name']}. Waiting for scheduler...")
     
     return {"success": True, "round_id": round_id, "message": "Accepted"}
 
