@@ -36,6 +36,22 @@ const Dashboard = () => {
   const [copiedSdk, setCopiedSdk] = useState(false);
   const [copiedNode, setCopiedNode] = useState(false);
 
+  // --- BRANDING REMOVER (HACK FOR DEMO) ---
+  useEffect(() => {
+    const cleaner = setInterval(() => {
+      // Find any link pointing to the editor platform and hide it
+      const branding = Array.from(document.querySelectorAll('a')).find(el => el.href.includes('emergent') || el.innerText.includes('Emergent'));
+      if (branding) {
+        branding.style.display = 'none';
+        branding.style.visibility = 'hidden';
+        branding.style.opacity = '0';
+        branding.style.pointerEvents = 'none';
+      }
+    }, 500); // Check every 0.5s
+    return () => clearInterval(cleaner);
+  }, []);
+  // ----------------------------------------
+
   // Initial Check
   useEffect(() => {
     if (apiKey) {
@@ -130,7 +146,7 @@ const Dashboard = () => {
   // --- RENDER: LOGIN ---
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-4 relative z-50">
         <motion.div
           className="bg-[#0A0A0A] border border-white/10 rounded-xl p-8 max-w-md w-full"
           initial={{ opacity: 0, y: 20 }}
@@ -163,7 +179,7 @@ const Dashboard = () => {
 
   // --- RENDER: DASHBOARD ---
   return (
-    <div className="min-h-screen bg-[#050505] text-[#EDEDED]">
+    <div className="min-h-screen bg-[#050505] text-[#EDEDED] relative z-50">
       
       {/* --- NAVIGATION BAR --- */}
       <div className="border-b border-white/5 bg-[#0A0A0A] sticky top-0 z-40 shadow-sm">
