@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X, Terminal, Copy, Check } from 'lucide-react';
+import { LayoutDashboard, BrainCircuit, Download, Activity, Network, Settings2, ShieldCheck, Eye, EyeOff, Bell, X, Terminal, Copy, Check, History } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +27,9 @@ const Dashboard = () => {
   const [companyInfo, setCompanyInfo] = useState(null);
   const [copied, setCopied] = useState(false);
   
+  // New State for History
+  const [myUpdates, setMyUpdates] = useState([]);
+
   // Notification State
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -71,15 +74,17 @@ const Dashboard = () => {
   const loadDashboardData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [statsRes, roundsRes, companiesRes] = await Promise.all([
+      const [statsRes, roundsRes, companiesRes, historyRes] = await Promise.all([
         axios.get(`${API}/analytics/dashboard`, { headers: { 'X-API-Key': apiKey } }),
         axios.get(`${API}/analytics/rounds`, { headers: { 'X-API-Key': apiKey } }),
-        axios.get(`${API}/companies`, { headers: { 'X-API-Key': apiKey } })
+        axios.get(`${API}/companies`, { headers: { 'X-API-Key': apiKey } }),
+        axios.get(`${API}/analytics/my-updates`, { headers: { 'X-API-Key': apiKey } }) // NEW
       ]);
       
       setDashboardStats(statsRes.data);
       setTrainingRounds(roundsRes.data);
       setCompanies(companiesRes.data);
+      setMyUpdates(historyRes.data); // Store history
     } catch (error) {
       console.error('Failed to load dashboard data', error);
     } finally {
@@ -272,10 +277,11 @@ const Dashboard = () => {
           <TabsList className="bg-[#0A0A0A] border border-white/5 mb-6">
             <TabsTrigger value="overview">Live Analytics</TabsTrigger>
             <TabsTrigger value="companies">Network Nodes</TabsTrigger>
+            <TabsTrigger value="history">My History</TabsTrigger> {/* NEW TAB */}
             <TabsTrigger value="setup">Client Setup</TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: OVERVIEW (GRAPH) */}
+          {/* TAB 1: OVERVIEW */}
           <TabsContent value="overview">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
               <div className="flex justify-between items-center mb-6">
@@ -297,7 +303,6 @@ const Dashboard = () => {
                         tick={{fill: '#A1A1AA', fontSize: 12}}
                         tickLine={false}
                         axisLine={false}
-                        label={{ value: 'Round', position: 'insideBottom', offset: -5, fill: '#525252' }}
                       />
                       <YAxis 
                         stroke="#525252" 
@@ -309,7 +314,7 @@ const Dashboard = () => {
                       <Tooltip 
                         contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '8px' }}
                         itemStyle={{ color: '#E5E5E5' }}
-                        labelStyle={{ color: '#A1A1AA', marginBottom: '4px' }}
+                        labelStyle={{ color: '#A1A1AA' }}
                         formatter={(value) => [`${(value * 100).toFixed(2)}%`, 'Accuracy']}
                       />
                       <Line 
@@ -319,7 +324,6 @@ const Dashboard = () => {
                         strokeWidth={3} 
                         dot={{ r: 4, fill: '#1E1B4B', strokeWidth: 2, stroke: '#6366F1' }} 
                         activeDot={{ r: 6, fill: '#818CF8' }}
-                        animationDuration={1000}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -356,7 +360,65 @@ const Dashboard = () => {
             </Card>
           </TabsContent>
 
-          {/* TAB 3: SETUP - NEW CLI VERSION */}
+          {/* TAB 3: MY HISTORY (NEW) */}
+          <TabsContent value="history">
+            <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
+              <h3 className="text-xl font-bold mb-6">My Contribution History</h3>
+              {myUpdates.length === 0 ? (
+                <div className="text-center py-12 text-[#525252]">
+                  <History className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                  <p>No contributions found yet.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-[#A1A1AA] uppercase bg-[#171717] border-b border-white/10">
+                      <tr>
+                        <th className="px-6 py-3">Round</th>
+                        <th className="px-6 py-3">Timestamp</th>
+                        <th className="px-6 py-3">Local Accuracy</th>
+                        <th className="px-6 py-3">Loss</th>
+                        <th className="px-6 py-3">Samples</th>
+                        <th className="px-6 py-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {myUpdates.map((update, idx) => (
+                        <tr key={idx} className="bg-[#0A0A0A] hover:bg-[#121212]">
+                          <td className="px-6 py-4 font-mono font-medium text-indigo-400">
+                            {update.round_id.replace('round_', '#')}
+                          </td>
+                          <td className="px-6 py-4 text-[#A1A1AA]">
+                            {new Date(update.timestamp).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded">
+                              {(update.metrics.accuracy * 100).toFixed(2)}%
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-[#A1A1AA]">
+                            {update.metrics.loss.toFixed(4)}
+                          </td>
+                          <td className="px-6 py-4">
+                            {update.num_samples}
+                          </td>
+                          <td className="px-6 py-4">
+                            {update.status === 'processed' ? (
+                              <Badge className="bg-emerald-500/20 text-emerald-500 border-0">Aggregated</Badge>
+                            ) : (
+                              <Badge className="bg-amber-500/20 text-amber-500 border-0">Pending</Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* TAB 4: SETUP */}
           <TabsContent value="setup">
             <Card className="bg-[#0A0A0A] border border-white/5 rounded-xl p-6">
               <h3 className="text-xl font-bold mb-6">Client Configuration (CLI)</h3>
