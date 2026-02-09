@@ -1,5 +1,5 @@
-from fastapi.responses import PlainTextResponse
 from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -101,7 +101,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting at Round {CURRENT_ROUND}")
     
     # --- UPDATED SCHEDULER: 2 MINUTES ---
-    # Since we removed the "Instant Trigger", this is now the ONLY way updates happen.
     scheduler.add_job(
         auto_aggregate_gradients, 
         'interval', 
@@ -236,7 +235,6 @@ async def aggregate_gradients() -> Dict[str, Any]:
         round_id = f"round_{CURRENT_ROUND}"
         updates = await db.gradient_updates.find({"round_id": round_id, "status": "pending"}, {"_id": 0}).to_list(1000)
         
-        # Don't aggregate if nothing is pending
         if not updates:
             return {"success": False, "message": "No pending updates"}
         
@@ -251,7 +249,6 @@ async def aggregate_gradients() -> Dict[str, Any]:
                 valid_gradients.append(weights)
                 count = max(update.get('num_samples', 1), 1)
                 sample_counts.append(count)
-                
                 metrics = update.get('metrics', {'accuracy': 0, 'loss': 0})
                 weighted_acc_sum += (metrics['accuracy'] * count)
                 weighted_loss_sum += (metrics['loss'] * count)
@@ -321,8 +318,6 @@ async def login_company(login_input: CompanyLogin):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return LoginResponse(success=True, company_id=company['company_id'], name=company['name'], email=company['email'], api_key=company['api_key'], message="Login successful")
 
-# --- MISSING ROUTES FIXED HERE ---
-
 @api_router.get("/auth/verify")
 async def verify_key(company: dict = Depends(verify_api_key)):
     """Verifies API Key for Frontend"""
@@ -348,6 +343,18 @@ async def get_active_companies():
         print(f"Error: {e}")
         return []
 
+# --- NEW ENDPOINT: MY UPDATES ---
+@api_router.get("/analytics/my-updates")
+async def get_my_updates(company: dict = Depends(verify_api_key)):
+    """Fetches update history ONLY for the authenticated bank"""
+    updates = await db.gradient_updates.find(
+        {"company_id": company['company_id']},
+        {"_id": 0, "gradient_data": 0} # Exclude heavy blob data
+    ).sort("timestamp", -1).limit(50).to_list(50)
+    
+    return updates
+# -------------------------------
+
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
     """Returns alerts for Dashboard"""
@@ -360,8 +367,6 @@ async def get_notifications(company: dict = Depends(verify_api_key)):
 async def get_notification_count():
     """Fake count to satisfy frontend"""
     return {"count": 0}
-
-# ---------------------------------
 
 @api_router.get("/model/download")
 async def download_model(company: dict = Depends(verify_api_key)):
@@ -387,10 +392,7 @@ async def submit_gradients(gradient_submit: GradientSubmit, request: Request, co
     }
     await db.gradient_updates.insert_one(update)
     
-    # --- INSTANT TRIGGER REMOVED ---
-    # The system will now ONLY update via the 2-minute scheduler.
     logger.info(f"Update received from {company['name']}. Waiting for scheduler...")
-    
     return {"success": True, "round_id": round_id, "message": "Accepted"}
 
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
@@ -405,13 +407,11 @@ async def get_dashboard_stats():
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
-    # 1. Fetch the NEWEST 100 rounds (Sort Descending: -1)
+    # Sort DESC to get latest, then reverse for graph
     history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", -1).to_list(100)
-    
-    # 2. Reverse them back to Chronological Order (Ascending) for the graph
-    history.reverse() 
-    
+    history.reverse()
     return [{"round": e.get("round_number", 0), "accuracy": e.get("avg_accuracy", 0), "loss": e.get("avg_loss", 0), "timestamp": e.get("timestamp", "")} for e in history] or [{"round": 1, "accuracy": 0.65, "loss": 0.80}]
+
 @api_router.get("/reset-system")
 async def reset_database():
     await db.training_rounds.delete_many({})
@@ -427,9 +427,6 @@ async def force_aggregate():
 
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
-    """
-    Generates the Internet Gateway Script as a downloadable file.
-    """
     base_url = str(request.base_url).rstrip('/')
     api_url = f"{base_url}/api"
 
@@ -437,7 +434,6 @@ async def get_client_script(request: Request, company: dict = Depends(verify_api
 """
 FinSecure Gateway Script
 Company: {company['name']}
-Role: Internet Bridge (No Training)
 """
 import requests
 import json
@@ -445,7 +441,6 @@ import os
 import time
 import sys
 
-# --- CONFIGURATION ---
 API_KEY = "{company['api_key']}"
 BACKEND_URL = "{api_url}"
 EXCHANGE_FOLDER = "./secure_transfer" 
@@ -455,14 +450,10 @@ class FederatedGateway:
         self.headers = {{"X-API-Key": api_key}}
         self.backend_url = backend_url
         self.current_round = -1
-        
-        # Ensure the shared folder exists
         os.makedirs(EXCHANGE_FOLDER, exist_ok=True)
         print(f"🌉 Gateway Active | Company: {company['name']}")
-        print(f"📂 Monitoring Folder: {{EXCHANGE_FOLDER}}")
 
     def run(self):
-        """Main Loop: Syncs data between Internet and Local Folder"""
         print("⏳ Waiting for updates...")
         while True:
             self._sync_downstream() 
@@ -470,41 +461,27 @@ class FederatedGateway:
             time.sleep(5)
 
     def _sync_downstream(self):
-        """Check Server for new Global Model -> Save to Folder"""
         try:
             resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 server_round = data.get('round', 0)
-                
                 if server_round > self.current_round:
                     print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
-                    
-                    filepath = f"{{EXCHANGE_FOLDER}}/global_model.json"
-                    with open(filepath, "w") as f:
+                    with open(f"{{EXCHANGE_FOLDER}}/global_model.json", "w") as f:
                         json.dump(data, f)
-                    
-                    print(f"    Saved to {{filepath}}")
                     self.current_round = server_round
         except Exception as e:
             print(f"⚠️ Connection Error: {{e}}")
 
     def _sync_upstream(self):
-        """Check Folder for Gradients -> Upload to Server"""
         local_file = f"{{EXCHANGE_FOLDER}}/local_gradients.json"
-        
         if os.path.exists(local_file):
-            print("\\n⬆️  Found local updates. Uploading to server...")
+            print("\\n⬆️  Found local updates. Uploading...")
             try:
                 with open(local_file, "r") as f:
                     payload = json.load(f)
-                
-                resp = requests.post(
-                    f"{{self.backend_url}}/federated/submit-gradients",
-                    headers=self.headers,
-                    json=payload
-                )
-                
+                resp = requests.post(f"{{self.backend_url}}/federated/submit-gradients", headers=self.headers, json=payload)
                 if resp.status_code == 200:
                     print("    ✅ Upload Successful!")
                     os.remove(local_file) 
@@ -517,8 +494,8 @@ if __name__ == "__main__":
     gateway = FederatedGateway(API_KEY, BACKEND_URL)
     gateway.run()
 '''
-    # RETURN RAW TEXT (Critical for CLI)
     return PlainTextResponse(script_content, media_type="text/x-python")
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "version": MODEL_VERSION}
