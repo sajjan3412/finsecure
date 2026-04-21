@@ -56,7 +56,7 @@ GLOBAL_MODEL = None
 MODEL_VERSION = "2.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 1
+AGGREGATION_THRESHOLD = 2  # <--- UPDATED: NOW WAITS FOR 2 BANKS
 aggregation_lock = asyncio.Lock()
 scheduler = AsyncIOScheduler()
 
@@ -100,7 +100,6 @@ async def lifespan(app: FastAPI):
     CURRENT_ROUND = latest_round['round_number'] + 1 if latest_round else 0
     logger.info(f"Starting at Round {CURRENT_ROUND}")
     
-    # --- UPDATED SCHEDULER: 2 MINUTES ---
     scheduler.add_job(
         auto_aggregate_gradients, 
         'interval', 
@@ -167,6 +166,12 @@ class Notification(BaseModel):
     type: str = "info"
     read: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# --- NEW: LIVE TRANSACTION MODEL ---
+class TransactionInput(BaseModel):
+    amount: float
+    time_of_day: float 
+    is_international: int 
 
 # --- 7. HELPER FUNCTIONS ---
 async def verify_api_key(x_api_key: str = Header(...)) -> dict:
@@ -237,8 +242,13 @@ async def aggregate_gradients() -> Dict[str, Any]:
         
         if not updates:
             return {"success": False, "message": "No pending updates"}
+            
+        # --- UPDATED: THRESHOLD CHECK ---
+        if len(updates) < AGGREGATION_THRESHOLD:
+            logger.info(f"⏳ Waiting for more banks. Currently {len(updates)}/{AGGREGATION_THRESHOLD} submitted.")
+            return {"success": False, "message": f"Waiting for {AGGREGATION_THRESHOLD} updates"}
         
-        logger.info(f"Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
+        logger.info(f"🚀 Threshold Reached! Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
         
         valid_gradients, sample_counts = [], []
         weighted_acc_sum, weighted_loss_sum, total_samples = 0, 0, 0
@@ -322,14 +332,37 @@ async def login_company(login_input: CompanyLogin):
 async def verify_key(company: dict = Depends(verify_api_key)):
     """Verifies API Key for Frontend"""
     return {"valid": True, "company_id": company['company_id'], "name": company['name']}
-# --- NEW SDK ENDPOINT ---
+
+# --- NEW: LIVE PREDICTION ENDPOINT ---
+@api_router.post("/transaction/predict")
+async def process_live_transaction(data: TransactionInput, company: dict = Depends(verify_api_key)):
+    global GLOBAL_MODEL
+    
+    # Map 3 inputs to the first 3 slots and pad the rest of the 30 with 0s.
+    input_array = np.zeros((1, 30), dtype=np.float32)
+    input_array[0, 0] = data.amount / 10000.0  # Scale amount 
+    input_array[0, 1] = data.time_of_day / 24.0 # Scale time
+    input_array[0, 2] = float(data.is_international)
+    
+    # Predict using the Global Model
+    prediction_prob = GLOBAL_MODEL.predict(input_array, verbose=0)[0][0]
+    
+    is_fraud = bool(prediction_prob > 0.5)
+    risk_score = float(prediction_prob * 100)
+    
+    return {
+        "transaction_id": f"TXN-{secrets.token_hex(4).upper()}",
+        "status": "BLOCKED" if is_fraud else "APPROVED",
+        "risk_score": round(risk_score, 2),
+        "message": "Fraudulent pattern detected by Federated Network" if is_fraud else "Transaction looks secure"
+    }
+
 @api_router.get("/client/sdk")
 async def get_client_sdk(request: Request):
     """
     Serves the FinSecure SDK library file.
     """
     base_url = str(request.base_url).rstrip('/')
-    # We use the base_url dynamically so it works on Render
     
     sdk_content = f'''"""
 FinSecure SDK v2.0
@@ -453,6 +486,7 @@ class FinSecureClient:
             print(".", end="", flush=True)
 '''
     return PlainTextResponse(sdk_content, media_type="text/x-python")
+
 @api_router.get("/companies")
 async def get_active_companies():
     """Returns list of banks for Dashboard"""
@@ -473,17 +507,15 @@ async def get_active_companies():
         print(f"Error: {e}")
         return []
 
-# --- NEW ENDPOINT: MY UPDATES ---
 @api_router.get("/analytics/my-updates")
 async def get_my_updates(company: dict = Depends(verify_api_key)):
     """Fetches update history ONLY for the authenticated bank"""
     updates = await db.gradient_updates.find(
         {"company_id": company['company_id']},
-        {"_id": 0, "gradient_data": 0} # Exclude heavy blob data
+        {"_id": 0, "gradient_data": 0} 
     ).sort("timestamp", -1).limit(50).to_list(50)
     
     return updates
-# -------------------------------
 
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
@@ -521,8 +553,16 @@ async def submit_gradients(gradient_submit: GradientSubmit, request: Request, co
         "status": "pending"
     }
     await db.gradient_updates.insert_one(update)
+    logger.info(f"✅ Update received from {company['name']}.")
     
-    logger.info(f"Update received from {company['name']}. Waiting for scheduler...")
+    # --- UPDATED: INSTANT AGGREGATION TRIGGER ---
+    pending_count = await db.gradient_updates.count_documents({"round_id": round_id, "status": "pending"})
+    if pending_count >= AGGREGATION_THRESHOLD:
+        logger.info("🔥 2/2 Banks Submitted! Triggering Instant Aggregation...")
+        asyncio.create_task(aggregate_gradients())
+    else:
+        logger.info(f"⏳ 1/2 Banks Submitted. Waiting for the other bank...")
+        
     return {"success": True, "round_id": round_id, "message": "Accepted"}
 
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
@@ -537,7 +577,6 @@ async def get_dashboard_stats():
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
-    # Sort DESC to get latest, then reverse for graph
     history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", -1).to_list(100)
     history.reverse()
     return [{"round": e.get("round_number", 0), "accuracy": e.get("avg_accuracy", 0), "loss": e.get("avg_loss", 0), "timestamp": e.get("timestamp", "")} for e in history] or [{"round": 1, "accuracy": 0.65, "loss": 0.80}]
@@ -554,77 +593,6 @@ async def reset_database():
 @api_router.get("/force-aggregate")
 async def force_aggregate():
     return await aggregate_gradients()
-
-@api_router.get("/client/script")
-async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
-    base_url = str(request.base_url).rstrip('/')
-    api_url = f"{base_url}/api"
-
-    script_content = f'''#!/usr/bin/env python3
-"""
-FinSecure Gateway Script
-Company: {company['name']}
-"""
-import requests
-import json
-import os
-import time
-import sys
-
-API_KEY = "{company['api_key']}"
-BACKEND_URL = "{api_url}"
-EXCHANGE_FOLDER = "./secure_transfer" 
-
-class FederatedGateway:
-    def __init__(self, api_key, backend_url):
-        self.headers = {{"X-API-Key": api_key}}
-        self.backend_url = backend_url
-        self.current_round = -1
-        os.makedirs(EXCHANGE_FOLDER, exist_ok=True)
-        print(f"🌉 Gateway Active | Company: {company['name']}")
-
-    def run(self):
-        print("⏳ Waiting for updates...")
-        while True:
-            self._sync_downstream() 
-            self._sync_upstream()   
-            time.sleep(5)
-
-    def _sync_downstream(self):
-        try:
-            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                server_round = data.get('round', 0)
-                if server_round > self.current_round:
-                    print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
-                    with open(f"{{EXCHANGE_FOLDER}}/global_model.json", "w") as f:
-                        json.dump(data, f)
-                    self.current_round = server_round
-        except Exception as e:
-            print(f"⚠️ Connection Error: {{e}}")
-
-    def _sync_upstream(self):
-        local_file = f"{{EXCHANGE_FOLDER}}/local_gradients.json"
-        if os.path.exists(local_file):
-            print("\\n⬆️  Found local updates. Uploading...")
-            try:
-                with open(local_file, "r") as f:
-                    payload = json.load(f)
-                resp = requests.post(f"{{self.backend_url}}/federated/submit-gradients", headers=self.headers, json=payload)
-                if resp.status_code == 200:
-                    print("    ✅ Upload Successful!")
-                    os.remove(local_file) 
-                else:
-                    print(f"    ❌ Upload Failed: {{resp.text}}")
-            except Exception as e:
-                print(f"⚠️ Upload Error: {{e}}")
-
-if __name__ == "__main__":
-    gateway = FederatedGateway(API_KEY, BACKEND_URL)
-    gateway.run()
-'''
-    return PlainTextResponse(script_content, media_type="text/x-python")
 
 @app.get("/health")
 async def health_check():
