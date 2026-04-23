@@ -56,7 +56,7 @@ GLOBAL_MODEL = None
 MODEL_VERSION = "2.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 1  # <--- UPDATED: NOW UPDATES INSTANTLY FOR DEMO
+AGGREGATION_THRESHOLD = 1  # Instant updates for demo
 aggregation_lock = asyncio.Lock()
 scheduler = AsyncIOScheduler()
 
@@ -167,7 +167,6 @@ class Notification(BaseModel):
     read: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# --- LIVE TRANSACTION MODEL ---
 class TransactionInput(BaseModel):
     amount: float
     time_of_day: float 
@@ -235,71 +234,77 @@ async def broadcast_notification(title: str, message: str, notification_type: st
 # --- 8. AGGREGATION LOGIC (CORE) ---
 async def aggregate_gradients() -> Dict[str, Any]:
     async with aggregation_lock:
-        global GLOBAL_MODEL, CURRENT_ROUND, PREVIOUS_ACCURACY
-        
-        round_id = f"round_{CURRENT_ROUND}"
-        updates = await db.gradient_updates.find({"round_id": round_id, "status": "pending"}, {"_id": 0}).to_list(1000)
-        
-        if not updates:
-            return {"success": False, "message": "No pending updates"}
+        try:
+            global GLOBAL_MODEL, CURRENT_ROUND, PREVIOUS_ACCURACY
             
-        # --- INSTANT THRESHOLD CHECK ---
-        if len(updates) < AGGREGATION_THRESHOLD:
-            logger.info(f"⏳ Waiting for more banks. Currently {len(updates)}/{AGGREGATION_THRESHOLD} submitted.")
-            return {"success": False, "message": f"Waiting for {AGGREGATION_THRESHOLD} updates"}
-        
-        logger.info(f"🚀 Threshold Reached! Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
-        
-        valid_gradients, sample_counts = [], []
-        weighted_acc_sum, weighted_loss_sum, total_samples = 0, 0, 0
+            round_id = f"round_{CURRENT_ROUND}"
+            updates = await db.gradient_updates.find({"round_id": round_id, "status": "pending"}, {"_id": 0}).to_list(1000)
+            
+            if not updates:
+                return {"success": False, "message": "No pending updates"}
+                
+            if len(updates) < AGGREGATION_THRESHOLD:
+                logger.info(f"⏳ Waiting for more banks. Currently {len(updates)}/{AGGREGATION_THRESHOLD} submitted.")
+                return {"success": False, "message": f"Waiting for {AGGREGATION_THRESHOLD} updates"}
+            
+            logger.info(f"🚀 Threshold Reached! Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
+            
+            valid_gradients, sample_counts = [], []
+            weighted_acc_sum, weighted_loss_sum, total_samples = 0.0, 0.0, 0
 
-        for update in updates:
-            weights = deserialize_model_weights(update['gradient_data'])
-            if weights and validate_gradient_shape(weights, GLOBAL_MODEL):
-                valid_gradients.append(weights)
-                count = max(update.get('num_samples', 1), 1)
-                sample_counts.append(count)
-                metrics = update.get('metrics', {'accuracy': 0, 'loss': 0})
-                weighted_acc_sum += (metrics['accuracy'] * count)
-                weighted_loss_sum += (metrics['loss'] * count)
-                total_samples += count
-            else:
-                logger.warning(f"Dropped invalid update from {update.get('company_id')}")
-        
-        if not valid_gradients:
-            return {"success": False, "message": "No valid updates"}
-        
-        # Update Model
-        avg_gradients = federated_averaging(valid_gradients, sample_counts)
-        if avg_gradients:
-            GLOBAL_MODEL.set_weights(avg_gradients)
-        
-        # Math for Dashboard Accuracy (90%+)
-        network_accuracy = weighted_acc_sum / total_samples if total_samples > 0 else 0
-        network_loss = weighted_loss_sum / total_samples if total_samples > 0 else 0
-        
-        training_round = {
-            "round_id": round_id,
-            "round_number": CURRENT_ROUND,
-            "participating_companies": len(valid_gradients),
-            "total_samples_trained": total_samples,
-            "avg_accuracy": network_accuracy,
-            "avg_loss": network_loss,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        await db.training_rounds.insert_one(training_round)
-        await db.gradient_updates.update_many({"round_id": round_id}, {"$set": {"status": "processed"}})
-        
-        improvement = network_accuracy - PREVIOUS_ACCURACY
-        await broadcast_notification(
-            "Round Complete",
-            f"Round {CURRENT_ROUND}: Network Accuracy {network_accuracy*100:.2f}%",
-            "success" if improvement > 0 else "info"
-        )
-        
-        PREVIOUS_ACCURACY = network_accuracy
-        CURRENT_ROUND += 1
-        return {"success": True, "round_number": CURRENT_ROUND - 1, "avg_accuracy": network_accuracy}
+            for update in updates:
+                weights = deserialize_model_weights(update['gradient_data'])
+                if weights and validate_gradient_shape(weights, GLOBAL_MODEL):
+                    valid_gradients.append(weights)
+                    count = int(max(update.get('num_samples', 1), 1))
+                    sample_counts.append(count)
+                    metrics = update.get('metrics', {'accuracy': 0.0, 'loss': 0.0})
+                    weighted_acc_sum += float(metrics['accuracy']) * count
+                    weighted_loss_sum += float(metrics['loss']) * count
+                    total_samples += count
+                else:
+                    logger.warning(f"Dropped invalid update from {update.get('company_id')}")
+            
+            if not valid_gradients:
+                return {"success": False, "message": "No valid updates"}
+            
+            # Update Model
+            avg_gradients = federated_averaging(valid_gradients, sample_counts)
+            if avg_gradients:
+                GLOBAL_MODEL.set_weights(avg_gradients)
+            
+            # CRITICAL FIX: Cast NumPy floats to standard Python floats to prevent MongoDB crashes
+            network_accuracy = float(weighted_acc_sum / total_samples) if total_samples > 0 else 0.0
+            network_loss = float(weighted_loss_sum / total_samples) if total_samples > 0 else 0.0
+            
+            training_round = {
+                "round_id": round_id,
+                "round_number": int(CURRENT_ROUND),
+                "participating_companies": int(len(valid_gradients)),
+                "total_samples_trained": int(total_samples),
+                "avg_accuracy": network_accuracy,
+                "avg_loss": network_loss,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.training_rounds.insert_one(training_round)
+            await db.gradient_updates.update_many({"round_id": round_id}, {"$set": {"status": "processed"}})
+            
+            improvement = network_accuracy - PREVIOUS_ACCURACY
+            await broadcast_notification(
+                "Round Complete",
+                f"Round {CURRENT_ROUND}: Network Accuracy {network_accuracy*100:.2f}%",
+                "success" if improvement > 0 else "info"
+            )
+            
+            PREVIOUS_ACCURACY = network_accuracy
+            CURRENT_ROUND += 1
+            logger.info(f"✅ Round successfully increased to {CURRENT_ROUND}")
+            return {"success": True, "round_number": CURRENT_ROUND - 1, "avg_accuracy": network_accuracy}
+            
+        except Exception as e:
+            logger.error(f"CRITICAL ERROR in aggregation: {e}")
+            return {"success": False, "message": str(e)}
 
 async def auto_aggregate_gradients():
     try:
@@ -338,13 +343,11 @@ async def verify_key(company: dict = Depends(verify_api_key)):
 async def process_live_transaction(data: TransactionInput, company: dict = Depends(verify_api_key)):
     global GLOBAL_MODEL
     
-    # Map 3 inputs to the first 3 slots and pad the rest of the 30 with 0s.
     input_array = np.zeros((1, 30), dtype=np.float32)
-    input_array[0, 0] = data.amount / 10000.0  # Scale amount 
-    input_array[0, 1] = data.time_of_day / 24.0 # Scale time
+    input_array[0, 0] = data.amount / 10000.0  
+    input_array[0, 1] = data.time_of_day / 24.0 
     input_array[0, 2] = float(data.is_international)
     
-    # Predict using the Global Model
     prediction_prob = GLOBAL_MODEL.predict(input_array, verbose=0)[0][0]
     
     is_fraud = bool(prediction_prob > 0.5)
@@ -354,14 +357,12 @@ async def process_live_transaction(data: TransactionInput, company: dict = Depen
         "transaction_id": f"TXN-{secrets.token_hex(4).upper()}",
         "status": "BLOCKED" if is_fraud else "APPROVED",
         "risk_score": round(risk_score, 2),
-        "message": "Fraudulent pattern detected by Federated Network" if is_fraud else "Transaction looks secure"
+        "message": "Fraudulent pattern detected by Cyber Shield" if is_fraud else "Transaction looks secure"
     }
 
 @api_router.get("/client/sdk")
 async def get_client_sdk(request: Request):
-    """
-    Serves the FinSecure SDK library file.
-    """
+    """Serves the FinSecure SDK library file."""
     base_url = str(request.base_url).rstrip('/')
     
     sdk_content = f'''"""
@@ -409,13 +410,10 @@ class FinSecureClient:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Check if we already have this round
                 if data['round'] <= self.current_round:
                     return None, self.current_round
 
                 self.current_round = data['round']
-                
-                # Deserialize weights
                 weights_data = base64.b64decode(data['weights'])
                 buffer = io.BytesIO(weights_data)
                 npz = np.load(buffer, allow_pickle=True)
@@ -429,18 +427,13 @@ class FinSecureClient:
             return None, 0
 
     def submit_update(self, model, X_train_len, metrics):
-        """
-        Uploads trained gradients to the server.
-        """
         try:
-            # 1. Serialize Weights
             weights = model.get_weights()
             buffer = io.BytesIO()
             np.savez_compressed(buffer, *weights)
             buffer.seek(0)
             encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
             
-            # 2. Prepare Payload
             payload = {{
                 "gradient_data": encoded_weights,
                 "metrics": {{
@@ -450,7 +443,6 @@ class FinSecureClient:
                 "num_samples": int(X_train_len)
             }}
             
-            # 3. Upload
             print(f"⬆️  Uploading results (Accuracy: {{metrics['accuracy']:.2%}})...", end=" ")
             response = requests.post(
                 f"{{self.server_url}}/api/federated/submit-gradients",
@@ -470,7 +462,6 @@ class FinSecureClient:
             return False
 
     def await_next_round(self):
-        """Helper to pause execution until a new round starts"""
         print("⏳ Waiting for next round...", end="", flush=True)
         while True:
             try:
@@ -519,7 +510,6 @@ HEADERS = {{"X-API-Key": API_KEY}}
 
 print(f"\\n{{GREEN}}✅ Securely connected as: {{BANK_NAME}}{{RESET}}")
 
-# --- 1. INITIALIZE REALISTIC DATABASES (10 FEATURES) ---
 CSV_HEADERS = [
     'Amount', 'Time', 'Is_International', 'Txn_Type', 
     'Location_Dist', 'New_Device', 'Prev_Declines', 
@@ -544,7 +534,7 @@ if not os.path.exists(CORE_DB_FILE):
             mcc = round(np.random.uniform(0.1, 0.4), 2)
             
             writer.writerow([amt, time_val, is_int, txn_type, loc_dist, new_dev, declines, age, vel, mcc, 0])
-    print(f"{{GREEN}}📁 Core Ledger created: {{CORE_DB_FILE}} (500 records, 10 features){{RESET}}")
+    print(f"{{GREEN}}📁 Core Ledger created: {{CORE_DB_FILE}}{{RESET}}")
 
 if not os.path.exists(ML_BUFFER_FILE):
     with open(ML_BUFFER_FILE, 'w', newline='') as f:
@@ -552,7 +542,6 @@ if not os.path.exists(ML_BUFFER_FILE):
         writer.writerow(CSV_HEADERS)
     print(f"{{GREEN}}📁 Dedicated ML Training Buffer created: {{ML_BUFFER_FILE}}{{RESET}}")
 
-# --- 2. BUILD LOCAL NEURAL NETWORK ---
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
     tf.keras.layers.Dropout(0.2),
@@ -581,7 +570,6 @@ def sync_global_model():
 sync_global_model()
 last_txn = None
 
-# --- 3. INTERACTIVE TERMINAL LOOP ---
 while True:
     print(f"\\n{{CYAN}}========== {{BANK_NAME}} TERMINAL =========={{RESET}}")
     print("1. Process Live Transaction")
@@ -600,13 +588,11 @@ while True:
             print(f"{{RED}}Invalid input! Please enter numbers.{{RESET}}")
             continue
             
-        # Simulate Bank System Auto-Fetching Metadata
         print(f"\\n{{CYAN}}🔍 Auto-fetching transaction metadata...{{RESET}}")
         time.sleep(0.5)
         
-        # If it's a high amount, make metadata look slightly riskier to be realistic
         is_risky = 1 if amt > 5000 else 0
-        txn_type = 1 # Online
+        txn_type = 1 
         loc_dist = round(np.random.uniform(500, 2000) if is_risky else np.random.uniform(0, 50), 1)
         new_dev = 1 if is_risky else 0
         declines = 2 if is_risky else 0
@@ -624,7 +610,6 @@ while True:
         
         last_txn = [amt, time_val, isInt, txn_type, loc_dist, new_dev, declines, age, vel, mcc]
         
-        # Map 10 features to the 30-feature Neural Network array
         test_txn = np.zeros((1, 30), dtype=np.float32)
         test_txn[0, 0] = amt / 10000.0
         test_txn[0, 1] = time_val / 24.0
@@ -662,9 +647,9 @@ while True:
             writer = csv.writer(f)
             for _ in range(50):
                 noisy_txn = list(last_txn)
-                noisy_txn[0] = round(noisy_txn[0] * np.random.uniform(0.9, 1.1), 2) # Vary amount slightly
-                noisy_txn[4] = round(noisy_txn[4] * np.random.uniform(0.9, 1.1), 1) # Vary distance
-                writer.writerow(noisy_txn + [1]) # Mark as Fraud
+                noisy_txn[0] = round(noisy_txn[0] * np.random.uniform(0.9, 1.1), 2)
+                noisy_txn[4] = round(noisy_txn[4] * np.random.uniform(0.9, 1.1), 1)
+                writer.writerow(noisy_txn + [1]) 
                 
         print("📊 Compiling training batch from Ledger and Buffer...")
         try:
@@ -698,15 +683,16 @@ while True:
             
             print(f"⬆️ Uploading Encrypted Intelligence to Cyber Shield Server...")
             
-            # THE CRITICAL FLOAT FIX IS RIGHT HERE
+            # --- STRICT FLOAT/INT CASTING FOR MONGODB COMPATIBILITY ---
             res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
                 "gradient_data": encoded_weights,
                 "metrics": {{"accuracy": float(hist.history['accuracy'][-1]), "loss": float(hist.history['loss'][-1])}},
-                "num_samples": len(X_train)
+                "num_samples": int(len(X_train))
             }})
             
             if res.status_code == 200:
                 print(f"{{GREEN}}✅ Network Notified! Global Model Updated.{{RESET}}")
+                sync_global_model() # Instantly pull the new round
             else:
                 print(f"{{RED}}❌ Upload Failed: {{res.text}}{{RESET}}")
                 
@@ -722,7 +708,6 @@ while True:
 
 @api_router.get("/companies")
 async def get_active_companies():
-    """Returns list of banks for Dashboard"""
     try:
         cursor = db.companies.find({}) 
         companies = await cursor.to_list(length=100)
@@ -742,17 +727,14 @@ async def get_active_companies():
 
 @api_router.get("/analytics/my-updates")
 async def get_my_updates(company: dict = Depends(verify_api_key)):
-    """Fetches update history ONLY for the authenticated bank"""
     updates = await db.gradient_updates.find(
         {"company_id": company['company_id']},
         {"_id": 0, "gradient_data": 0} 
     ).sort("timestamp", -1).limit(50).to_list(50)
-    
     return updates
 
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
-    """Returns alerts for Dashboard"""
     return await db.notifications.find(
         {"$or": [{"company_id": company['company_id']}, {"company_id": None}]},
         {"_id": 0}
@@ -760,7 +742,6 @@ async def get_notifications(company: dict = Depends(verify_api_key)):
 
 @api_router.get("/notifications/unread/count")
 async def get_notification_count():
-    """Fake count to satisfy frontend"""
     return {"count": 0}
 
 @api_router.get("/model/download")
@@ -788,11 +769,16 @@ async def submit_gradients(gradient_submit: GradientSubmit, request: Request, co
     await db.gradient_updates.insert_one(update)
     logger.info(f"✅ Update received from {company['name']}.")
     
-    # --- INSTANT AGGREGATION TRIGGER ---
+    # --- CRITICAL FIX: SYNCHRONOUS EXECUTION ---
     pending_count = await db.gradient_updates.count_documents({"round_id": round_id, "status": "pending"})
     if pending_count >= AGGREGATION_THRESHOLD:
         logger.info(f"🔥 {AGGREGATION_THRESHOLD}/{AGGREGATION_THRESHOLD} Banks Submitted! Triggering Instant Aggregation...")
-        asyncio.create_task(aggregate_gradients())
+        
+        # Await it directly so it calculates before answering the node
+        agg_result = await aggregate_gradients()
+        
+        if not agg_result.get("success"):
+            logger.error(f"Aggregation Failed internally: {agg_result}")
     else:
         logger.info(f"⏳ {pending_count}/{AGGREGATION_THRESHOLD} Banks Submitted. Waiting for the other bank...")
         
