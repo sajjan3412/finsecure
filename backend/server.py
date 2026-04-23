@@ -56,7 +56,7 @@ GLOBAL_MODEL = None
 MODEL_VERSION = "2.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 2  # <--- UPDATED: NOW WAITS FOR 2 BANKS
+AGGREGATION_THRESHOLD = 1  # <--- UPDATED: NOW UPDATES INSTANTLY FOR DEMO
 aggregation_lock = asyncio.Lock()
 scheduler = AsyncIOScheduler()
 
@@ -167,7 +167,7 @@ class Notification(BaseModel):
     read: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# --- NEW: LIVE TRANSACTION MODEL ---
+# --- LIVE TRANSACTION MODEL ---
 class TransactionInput(BaseModel):
     amount: float
     time_of_day: float 
@@ -243,7 +243,7 @@ async def aggregate_gradients() -> Dict[str, Any]:
         if not updates:
             return {"success": False, "message": "No pending updates"}
             
-        # --- UPDATED: THRESHOLD CHECK ---
+        # --- INSTANT THRESHOLD CHECK ---
         if len(updates) < AGGREGATION_THRESHOLD:
             logger.info(f"⏳ Waiting for more banks. Currently {len(updates)}/{AGGREGATION_THRESHOLD} submitted.")
             return {"success": False, "message": f"Waiting for {AGGREGATION_THRESHOLD} updates"}
@@ -333,7 +333,7 @@ async def verify_key(company: dict = Depends(verify_api_key)):
     """Verifies API Key for Frontend"""
     return {"valid": True, "company_id": company['company_id'], "name": company['name']}
 
-# --- NEW: LIVE PREDICTION ENDPOINT ---
+# --- LIVE PREDICTION ENDPOINT ---
 @api_router.post("/transaction/predict")
 async def process_live_transaction(data: TransactionInput, company: dict = Depends(verify_api_key)):
     global GLOBAL_MODEL
@@ -486,6 +486,7 @@ class FinSecureClient:
             print(".", end="", flush=True)
 '''
     return PlainTextResponse(sdk_content, media_type="text/x-python")
+
 @api_router.get("/client/script")
 async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
     base_url = str(request.base_url).rstrip('/')
@@ -591,10 +592,14 @@ while True:
     choice = input("Select Action (1-4): ")
     
     if choice == '1':
-        amt = float(input("💰 Amount ($): "))
-        time_val = float(input("🕒 Time (0-24): "))
-        isInt = float(input("🌍 International (1=Yes, 0=No): "))
-        
+        try:
+            amt = float(input("💰 Amount ($): "))
+            time_val = float(input("🕒 Time (0-24): "))
+            isInt = float(input("🌍 International (1=Yes, 0=No): "))
+        except ValueError:
+            print(f"{{RED}}Invalid input! Please enter numbers.{{RESET}}")
+            continue
+            
         # Simulate Bank System Auto-Fetching Metadata
         print(f"\\n{{CYAN}}🔍 Auto-fetching transaction metadata...{{RESET}}")
         time.sleep(0.5)
@@ -692,9 +697,11 @@ while True:
             encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
             
             print(f"⬆️ Uploading Encrypted Intelligence to Cyber Shield Server...")
+            
+            # THE CRITICAL FLOAT FIX IS RIGHT HERE
             res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
                 "gradient_data": encoded_weights,
-                "metrics": {{"accuracy": hist.history['accuracy'][-1], "loss": hist.history['loss'][-1]}},
+                "metrics": {{"accuracy": float(hist.history['accuracy'][-1]), "loss": float(hist.history['loss'][-1])}},
                 "num_samples": len(X_train)
             }})
             
@@ -712,6 +719,7 @@ while True:
         break
 '''
     return PlainTextResponse(script_content, media_type="text/x-python")
+
 @api_router.get("/companies")
 async def get_active_companies():
     """Returns list of banks for Dashboard"""
@@ -780,13 +788,13 @@ async def submit_gradients(gradient_submit: GradientSubmit, request: Request, co
     await db.gradient_updates.insert_one(update)
     logger.info(f"✅ Update received from {company['name']}.")
     
-    # --- UPDATED: INSTANT AGGREGATION TRIGGER ---
+    # --- INSTANT AGGREGATION TRIGGER ---
     pending_count = await db.gradient_updates.count_documents({"round_id": round_id, "status": "pending"})
     if pending_count >= AGGREGATION_THRESHOLD:
-        logger.info("🔥 2/2 Banks Submitted! Triggering Instant Aggregation...")
+        logger.info(f"🔥 {AGGREGATION_THRESHOLD}/{AGGREGATION_THRESHOLD} Banks Submitted! Triggering Instant Aggregation...")
         asyncio.create_task(aggregate_gradients())
     else:
-        logger.info(f"⏳ 1/2 Banks Submitted. Waiting for the other bank...")
+        logger.info(f"⏳ {pending_count}/{AGGREGATION_THRESHOLD} Banks Submitted. Waiting for the other bank...")
         
     return {"success": True, "round_id": round_id, "message": "Accepted"}
 
