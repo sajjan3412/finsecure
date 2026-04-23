@@ -486,7 +486,139 @@ class FinSecureClient:
             print(".", end="", flush=True)
 '''
     return PlainTextResponse(sdk_content, media_type="text/x-python")
+@api_router.get("/client/script")
+async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
+    base_url = str(request.base_url).rstrip('/')
+    api_url = f"{base_url}/api"
 
+    script_content = f'''#!/usr/bin/env python3
+"""
+FinSecure Interactive Gateway Script
+Company: {company['name']}
+"""
+import requests
+import json
+import os
+import time
+import sys
+import numpy as np
+import tensorflow as tf
+import base64
+import io
+
+API_KEY = "{company['api_key']}"
+BACKEND_URL = "{api_url}"
+BANK_NAME = "{company['name']}"
+
+# Terminal Colors
+RED, GREEN, CYAN, YELLOW, RESET = '\\033[91m', '\\033[92m', '\\033[96m', '\\033[93m', '\\033[0m'
+
+HEADERS = {{"X-API-Key": API_KEY}}
+
+print(f"\\n{{GREEN}}✅ Securely connected as: {{BANK_NAME}}{{RESET}}")
+
+# Build Local Neural Network
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dropout(0.2), 
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+def sync_global_model():
+    print(f"{{YELLOW}}⏳ Syncing with Global Intelligence...{{RESET}}", end=" ")
+    try:
+        res = requests.get(f"{{BACKEND_URL}}/model/download", headers=HEADERS)
+        if res.status_code == 200:
+            data = res.json()
+            weights_data = base64.b64decode(data['weights'])
+            npz = np.load(io.BytesIO(weights_data), allow_pickle=True)
+            model.set_weights([npz[f'arr_{{i}}'] for i in range(len(npz.files))])
+            print(f"{{GREEN}}Synced to Round {{data['round']}}{{RESET}}")
+        else:
+            print(f"{{RED}}Failed.{{RESET}}")
+    except Exception as e:
+        print(f"{{RED}}Error: {{e}}{{RESET}}")
+
+sync_global_model()
+last_txn = None
+
+while True:
+    print(f"\\n{{CYAN}}========== {{BANK_NAME}} TERMINAL =========={{RESET}}")
+    print("1. Process Live Transaction")
+    print("2. Report Last Transaction as Fraud & Train Network")
+    print("3. Sync Latest Global Intelligence")
+    print("4. Exit")
+    
+    choice = input("Select Action (1-4): ")
+    
+    if choice == '1':
+        amt = float(input("💰 Amount ($): "))
+        time_val = float(input("🕒 Time (0-24): "))
+        isInt = float(input("🌍 International (1=Yes, 0=No): "))
+        
+        last_txn = (amt, time_val, isInt)
+        
+        test_txn = np.zeros((1, 30), dtype=np.float32)
+        test_txn[0, 0] = amt / 10000.0
+        test_txn[0, 1] = time_val / 24.0
+        test_txn[0, 2] = isInt
+        
+        print(f"\\n{{YELLOW}}🧠 Analyzing against current neural weights...{{RESET}}")
+        time.sleep(1)
+        pred = model.predict(test_txn, verbose=0)[0][0]
+        
+        if pred > 0.5:
+            print(f"{{RED}}🚨 TRANSACTION BLOCKED! (Fraud Risk: {{pred*100:.1f}}%){{RESET}}")
+        else:
+            print(f"{{GREEN}}✅ TRANSACTION APPROVED (Fraud Risk: {{pred*100:.1f}}%){{RESET}}")
+
+    elif choice == '2':
+        if not last_txn:
+            print(f"{{RED}}No transaction to report!{{RESET}}")
+            continue
+            
+        print(f"\\n{{YELLOW}}⚙️ Initiating Local Federated Training...{{RESET}}")
+        
+        X_train = np.zeros((100, 30), dtype=np.float32)
+        X_train[:, 0] = np.random.uniform(last_txn[0]*0.8, last_txn[0]*1.2, 100) / 10000.0
+        X_train[:, 1] = last_txn[1] / 24.0
+        X_train[:, 2] = last_txn[2]
+        y_train = np.ones(100) 
+        
+        X_safe = np.zeros((100, 30), dtype=np.float32)
+        X_safe[:, 0] = np.random.uniform(10, 1000, 100) / 10000.0
+        y_safe = np.zeros(100)
+        
+        print("Training Neural Network locally...")
+        hist = model.fit(np.vstack([X_train, X_safe]), np.concatenate([y_train, y_safe]), epochs=20, verbose=0)
+        
+        buffer = io.BytesIO()
+        np.savez_compressed(buffer, *model.get_weights())
+        buffer.seek(0)
+        encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        print(f"⬆️ Uploading Intelligence to Central Server...")
+        res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
+            "gradient_data": encoded_weights,
+            "metrics": {{"accuracy": hist.history['accuracy'][-1], "loss": hist.history['loss'][-1]}},
+            "num_samples": 200
+        }})
+        
+        if res.status_code == 200:
+            print(f"{{GREEN}}✅ Network Notified! Global Model Updated.{{RESET}}")
+        else:
+            print(f"{{RED}}❌ Upload Failed.{{RESET}}")
+
+    elif choice == '3':
+        sync_global_model()
+    elif choice == '4':
+        break
+'''
+    return PlainTextResponse(script_content, media_type="text/x-python")
 @api_router.get("/companies")
 async def get_active_companies():
     """Returns list of banks for Dashboard"""
