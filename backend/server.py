@@ -497,10 +497,10 @@ FinSecure Interactive Gateway Script
 Company: {company['name']}
 """
 import requests
-import json
 import os
 import time
 import sys
+import csv
 import numpy as np
 import tensorflow as tf
 import base64
@@ -510,14 +510,48 @@ API_KEY = "{company['api_key']}"
 BACKEND_URL = "{api_url}"
 BANK_NAME = "{company['name']}"
 
-# Terminal Colors
-RED, GREEN, CYAN, YELLOW, RESET = '\\033[91m', '\\033[92m', '\\033[96m', '\\033[93m', '\\033[0m'
+CORE_DB_FILE = f"{{BANK_NAME.replace(' ', '_')}}_core_ledger.csv"
+ML_BUFFER_FILE = f"{{BANK_NAME.replace(' ', '_')}}_ml_training_buffer.csv"
 
+RED, GREEN, CYAN, YELLOW, RESET = '\\033[91m', '\\033[92m', '\\033[96m', '\\033[93m', '\\033[0m'
 HEADERS = {{"X-API-Key": API_KEY}}
 
 print(f"\\n{{GREEN}}✅ Securely connected as: {{BANK_NAME}}{{RESET}}")
 
-# Build Local Neural Network
+# --- 1. INITIALIZE REALISTIC DATABASES (10 FEATURES) ---
+CSV_HEADERS = [
+    'Amount', 'Time', 'Is_International', 'Txn_Type', 
+    'Location_Dist', 'New_Device', 'Prev_Declines', 
+    'Acct_Age', 'Velocity', 'MCC_Risk', 'Is_Fraud'
+]
+
+if not os.path.exists(CORE_DB_FILE):
+    print(f"{{YELLOW}}⚙️ Initializing Untouchable Core Ledger...{{RESET}}")
+    with open(CORE_DB_FILE, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(CSV_HEADERS)
+        for _ in range(500):
+            amt = round(np.random.uniform(10, 1500), 2)
+            time_val = round(np.random.uniform(0, 24), 1)
+            is_int = np.random.choice([0, 1], p=[0.95, 0.05])
+            txn_type = np.random.randint(1, 4)
+            loc_dist = round(np.random.uniform(0, 50), 1)
+            new_dev = 0
+            declines = 0
+            age = np.random.randint(30, 3650)
+            vel = np.random.randint(1, 4)
+            mcc = round(np.random.uniform(0.1, 0.4), 2)
+            
+            writer.writerow([amt, time_val, is_int, txn_type, loc_dist, new_dev, declines, age, vel, mcc, 0])
+    print(f"{{GREEN}}📁 Core Ledger created: {{CORE_DB_FILE}} (500 records, 10 features){{RESET}}")
+
+if not os.path.exists(ML_BUFFER_FILE):
+    with open(ML_BUFFER_FILE, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(CSV_HEADERS)
+    print(f"{{GREEN}}📁 Dedicated ML Training Buffer created: {{ML_BUFFER_FILE}}{{RESET}}")
+
+# --- 2. BUILD LOCAL NEURAL NETWORK ---
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
     tf.keras.layers.Dropout(0.2),
@@ -529,7 +563,7 @@ model = tf.keras.Sequential([
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 def sync_global_model():
-    print(f"{{YELLOW}}⏳ Syncing with Global Intelligence...{{RESET}}", end=" ")
+    print(f"\\n{{YELLOW}}⏳ Syncing with Global Intelligence...{{RESET}}", end=" ")
     try:
         res = requests.get(f"{{BACKEND_URL}}/model/download", headers=HEADERS)
         if res.status_code == 200:
@@ -546,6 +580,7 @@ def sync_global_model():
 sync_global_model()
 last_txn = None
 
+# --- 3. INTERACTIVE TERMINAL LOOP ---
 while True:
     print(f"\\n{{CYAN}}========== {{BANK_NAME}} TERMINAL =========={{RESET}}")
     print("1. Process Live Transaction")
@@ -560,58 +595,116 @@ while True:
         time_val = float(input("🕒 Time (0-24): "))
         isInt = float(input("🌍 International (1=Yes, 0=No): "))
         
-        last_txn = (amt, time_val, isInt)
+        # Simulate Bank System Auto-Fetching Metadata
+        print(f"\\n{{CYAN}}🔍 Auto-fetching transaction metadata...{{RESET}}")
+        time.sleep(0.5)
         
+        # If it's a high amount, make metadata look slightly riskier to be realistic
+        is_risky = 1 if amt > 5000 else 0
+        txn_type = 1 # Online
+        loc_dist = round(np.random.uniform(500, 2000) if is_risky else np.random.uniform(0, 50), 1)
+        new_dev = 1 if is_risky else 0
+        declines = 2 if is_risky else 0
+        age = np.random.randint(30, 3650)
+        vel = np.random.randint(3, 8) if is_risky else 1
+        mcc = 0.9 if is_risky else 0.2
+        
+        print(f" ├─ Transaction Type: Online (1)")
+        print(f" ├─ Location Distance: {{loc_dist}} miles")
+        print(f" ├─ New Device Flag: {{new_dev}}")
+        print(f" ├─ Prev. Declines (24h): {{declines}}")
+        print(f" ├─ Account Age: {{age}} days")
+        print(f" ├─ Txn Velocity (1h): {{vel}}")
+        print(f" └─ MCC Risk Score: {{mcc}}")
+        
+        last_txn = [amt, time_val, isInt, txn_type, loc_dist, new_dev, declines, age, vel, mcc]
+        
+        # Map 10 features to the 30-feature Neural Network array
         test_txn = np.zeros((1, 30), dtype=np.float32)
         test_txn[0, 0] = amt / 10000.0
         test_txn[0, 1] = time_val / 24.0
         test_txn[0, 2] = isInt
+        test_txn[0, 3] = txn_type / 3.0
+        test_txn[0, 4] = loc_dist / 10000.0
+        test_txn[0, 5] = new_dev
+        test_txn[0, 6] = declines / 10.0
+        test_txn[0, 7] = age / 3650.0
+        test_txn[0, 8] = vel / 50.0
+        test_txn[0, 9] = mcc
         
-        print(f"\\n{{YELLOW}}🧠 Analyzing against current neural weights...{{RESET}}")
+        print(f"\\n{{YELLOW}}🧠 Analyzing 10-dimensional vector against global weights...{{RESET}}")
         time.sleep(1)
         pred = model.predict(test_txn, verbose=0)[0][0]
         
         if pred > 0.5:
             print(f"{{RED}}🚨 TRANSACTION BLOCKED! (Fraud Risk: {{pred*100:.1f}}%){{RESET}}")
+            with open(CORE_DB_FILE, 'a', newline='') as f:
+                csv.writer(f).writerow(last_txn + [1])
         else:
             print(f"{{GREEN}}✅ TRANSACTION APPROVED (Fraud Risk: {{pred*100:.1f}}%){{RESET}}")
+            with open(CORE_DB_FILE, 'a', newline='') as f:
+                csv.writer(f).writerow(last_txn + [0])
 
     elif choice == '2':
         if not last_txn:
             print(f"{{RED}}No transaction to report!{{RESET}}")
             continue
             
-        print(f"\\n{{YELLOW}}⚙️ Initiating Local Federated Training...{{RESET}}")
+        print(f"\\n{{YELLOW}}⚙️ Initiating Incident Response...{{RESET}}")
         
-        X_train = np.zeros((100, 30), dtype=np.float32)
-        X_train[:, 0] = np.random.uniform(last_txn[0]*0.8, last_txn[0]*1.2, 100) / 10000.0
-        X_train[:, 1] = last_txn[1] / 24.0
-        X_train[:, 2] = last_txn[2]
-        y_train = np.ones(100) 
-        
-        X_safe = np.zeros((100, 30), dtype=np.float32)
-        X_safe[:, 0] = np.random.uniform(10, 1000, 100) / 10000.0
-        y_safe = np.zeros(100)
-        
-        print("Training Neural Network locally...")
-        hist = model.fit(np.vstack([X_train, X_safe]), np.concatenate([y_train, y_safe]), epochs=20, verbose=0)
-        
-        buffer = io.BytesIO()
-        np.savez_compressed(buffer, *model.get_weights())
-        buffer.seek(0)
-        encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
-        
-        print(f"⬆️ Uploading Intelligence to Central Server...")
-        res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
-            "gradient_data": encoded_weights,
-            "metrics": {{"accuracy": hist.history['accuracy'][-1], "loss": hist.history['loss'][-1]}},
-            "num_samples": 200
-        }})
-        
-        if res.status_code == 200:
-            print(f"{{GREEN}}✅ Network Notified! Global Model Updated.{{RESET}}")
-        else:
-            print(f"{{RED}}❌ Upload Failed.{{RESET}}")
+        print(f"✍️ Extracting 10-dimensional threat signature to {{ML_BUFFER_FILE}}...")
+        with open(ML_BUFFER_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            for _ in range(50):
+                noisy_txn = list(last_txn)
+                noisy_txn[0] = round(noisy_txn[0] * np.random.uniform(0.9, 1.1), 2) # Vary amount slightly
+                noisy_txn[4] = round(noisy_txn[4] * np.random.uniform(0.9, 1.1), 1) # Vary distance
+                writer.writerow(noisy_txn + [1]) # Mark as Fraud
+                
+        print("📊 Compiling training batch from Ledger and Buffer...")
+        try:
+            core_data = np.genfromtxt(CORE_DB_FILE, delimiter=',', skip_header=1)
+            safe_data = core_data[core_data[:, 10] == 0][:100]
+            fraud_data = np.genfromtxt(ML_BUFFER_FILE, delimiter=',', skip_header=1)
+            
+            combined_data = np.vstack([safe_data, fraud_data])
+            X_raw = combined_data[:, :10]
+            y_train = combined_data[:, 10]
+            
+            X_train = np.zeros((len(X_raw), 30), dtype=np.float32)
+            X_train[:, 0] = X_raw[:, 0] / 10000.0
+            X_train[:, 1] = X_raw[:, 1] / 24.0
+            X_train[:, 2] = X_raw[:, 2]
+            X_train[:, 3] = X_raw[:, 3] / 3.0
+            X_train[:, 4] = X_raw[:, 4] / 10000.0
+            X_train[:, 5] = X_raw[:, 5]
+            X_train[:, 6] = X_raw[:, 6] / 10.0
+            X_train[:, 7] = X_raw[:, 7] / 3650.0
+            X_train[:, 8] = X_raw[:, 8] / 50.0
+            X_train[:, 9] = X_raw[:, 9]
+            
+            print(f"🧠 Training Neural Network safely without touching Core Ledger...")
+            hist = model.fit(X_train, y_train, epochs=20, verbose=0)
+            
+            buffer = io.BytesIO()
+            np.savez_compressed(buffer, *model.get_weights())
+            buffer.seek(0)
+            encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
+            
+            print(f"⬆️ Uploading Encrypted Intelligence to Cyber Shield Server...")
+            res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
+                "gradient_data": encoded_weights,
+                "metrics": {{"accuracy": hist.history['accuracy'][-1], "loss": hist.history['loss'][-1]}},
+                "num_samples": len(X_train)
+            }})
+            
+            if res.status_code == 200:
+                print(f"{{GREEN}}✅ Network Notified! Global Model Updated.{{RESET}}")
+            else:
+                print(f"{{RED}}❌ Upload Failed: {{res.text}}{{RESET}}")
+                
+        except Exception as e:
+            print(f"{{RED}}❌ Failed to compile training data: {{e}}{{RESET}}")
 
     elif choice == '3':
         sync_global_model()
