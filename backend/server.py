@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import secrets
 import numpy as np
 import tensorflow as tf
@@ -19,6 +19,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import bcrypt
 from contextlib import asynccontextmanager
 import asyncio
+import smtplib
+from email.mime.text import MIMEText
 
 # --- 1. CONFIGURATION & LOGGING ---
 try:
@@ -38,6 +40,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# --- EMAIL CONFIGURATION ---
+EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 
 # --- 2. FASTAPI SETUP ---
 app = FastAPI()
@@ -168,6 +174,14 @@ class Notification(BaseModel):
     read: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
 # --- 7. HELPER FUNCTIONS ---
 async def verify_api_key(x_api_key: str = Header(...)) -> dict:
     company = await db.companies.find_one({"api_key": x_api_key, "status": "active"}, {"_id": 0})
@@ -226,6 +240,28 @@ async def broadcast_notification(title: str, message: str, notification_type: st
     notifications = [{"notification_id": str(uuid.uuid4()), "company_id": c['company_id'], "title": title, "message": message, "type": notification_type, "read": False, "created_at": datetime.now(timezone.utc).isoformat()} for c in companies]
     if notifications:
         await db.notifications.insert_many(notifications)
+
+def send_otp_email(receiver_email: str, otp: str):
+    """Background task to send the OTP email securely"""
+    if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
+        logger.error("Email credentials not configured in .env file.")
+        return
+
+    subject = "Cyber Shield - Password Reset OTP"
+    body = f"Your One-Time Password (OTP) for resetting your admin dashboard password is: {otp}\n\nThis OTP will expire in 10 minutes."
+    
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = receiver_email
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+            logger.info(f"Password reset OTP sent to {receiver_email}")
+    except Exception as e:
+        logger.error(f"Failed to send OTP email: {e}")
 
 # --- 8. AGGREGATION LOGIC (CORE) ---
 async def aggregate_gradients() -> Dict[str, Any]:
@@ -319,6 +355,58 @@ async def login_company(login_input: CompanyLogin):
     if not company or not verify_password(login_input.password, company['password_hash']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return LoginResponse(success=True, company_id=company['company_id'], name=company['name'], email=company['email'], api_key=company['api_key'], message="Login successful")
+
+# --- NEW PASSWORD RESET ROUTES ---
+@api_router.post("/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest, background_tasks: BackgroundTasks):
+    company = await db.companies.find_one({"email": request.email})
+    if not company:
+        raise HTTPException(status_code=404, detail="Email not registered")
+    
+    otp = secrets.token_hex(3).upper() 
+    expiration = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    await db.companies.update_one(
+        {"email": request.email},
+        {"$set": {"reset_otp": otp, "otp_expires": expiration}}
+    )
+
+    # Hand off the slow email sending process to the background
+    background_tasks.add_task(send_otp_email, request.email, otp)
+
+    return {"success": True, "message": "If the email is registered, an OTP has been sent."}
+
+@api_router.post("/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    company = await db.companies.find_one({"email": request.email})
+    if not company:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if "reset_otp" not in company or company["reset_otp"] != request.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    current_time = datetime.now(timezone.utc)
+    otp_expires = company["otp_expires"]
+    
+    # Ensure MongoDB datetime object is timezone-aware for comparison
+    if otp_expires.tzinfo is None:
+        otp_expires = otp_expires.replace(tzinfo=timezone.utc)
+
+    if current_time > otp_expires:
+        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+
+    hashed_new_password = hash_password(request.new_password)
+
+    await db.companies.update_one(
+        {"email": request.email},
+        {
+            "$set": {"password_hash": hashed_new_password},
+            "$unset": {"reset_otp": "", "otp_expires": ""} # Clear OTP fields for security
+        }
+    )
+
+    return {"success": True, "message": "Password successfully reset. You can now log in."}
+# ---------------------------------
 
 @api_router.get("/auth/verify")
 async def verify_key(company: dict = Depends(verify_api_key)):
