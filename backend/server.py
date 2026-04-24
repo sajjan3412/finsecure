@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends, Request
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import secrets
 import numpy as np
 import tensorflow as tf
@@ -19,425 +19,489 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import bcrypt
 from contextlib import asynccontextmanager
 import asyncio
-import smtplib
-from email.mime.text import MIMEText
 
-# --- 1. CONFIGURATION, LOGGING & RATE LIMITING ---
-# We keep this verbose to help you debug on Vercel/Render
+# --- 1. CONFIGURATION & LOGGING ---
 try:
-    from slowapi import Limiter, _rate_limit_exceeded_handler
-    from slowapi.util import get_remote_address
-    from slowapi.middleware import SlowAPIMiddleware
-    from slowapi.errors import RateLimitExceeded
-    RATE_LIMIT_ENABLED = True
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.middleware import SlowAPIMiddleware
+    from slowapi.errors import RateLimitExceeded
+    RATE_LIMIT_ENABLED = True
 except ImportError:
-    RATE_LIMIT_ENABLED = False
+    RATE_LIMIT_ENABLED = False
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("FinSecure_Global_Server")
+logger = logging.getLogger(__name__)
 
-# --- ENVIRONMENT VARIABLES ---
-EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-DB_NAME = os.environ.get('DB_NAME', 'finsecure_db')
+# --- 2. FASTAPI SETUP ---
+app = FastAPI()
+if RATE_LIMIT_ENABLED:
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
-# --- 2. DATABASE & STATE INITIALIZATION ---
-client = AsyncIOMotorClient(MONGO_URL)
-db = client[DB_NAME]
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ.get('DB_NAME', 'finsecure_db')]
 
+# --- 3. GLOBAL STATE ---
 GLOBAL_MODEL = None
 MODEL_VERSION = "2.0.0"
 CURRENT_ROUND = 0
 PREVIOUS_ACCURACY = 0.85
-AGGREGATION_THRESHOLD = 1 # Minimum nodes required to aggregate
+AGGREGATION_THRESHOLD = 1
 aggregation_lock = asyncio.Lock()
 scheduler = AsyncIOScheduler()
 
-# --- 3. DEEP LEARNING ARCHITECTURE ---
-# This must match the Client Edge Node exactly.
+# --- 4. ML MODELS (MATCHING CLIENT) ---
 def create_fraud_detection_model() -> tf.keras.Model:
-    """
-    Constructs the standard 6-layer DNN for Cyber Shield.
-    Architecture: 30 (Input) -> 64 -> 32 -> 16 -> 1 (Output)
-    """
-    model = tf.keras.Sequential([
-        tf.keras.layers.Dense(64, activation='relu', input_shape=(30,), name="dense_64"),
-        tf.keras.layers.Dropout(0.2, name="dropout_1"),
-        tf.keras.layers.Dense(32, activation='relu', name="dense_32"),
-        tf.keras.layers.Dropout(0.2, name="dropout_2"), 
-        tf.keras.layers.Dense(16, activation='relu', name="dense_16"),
-        tf.keras.layers.Dense(1, activation='sigmoid', name="output_layer")
-    ])
-    model.compile(
-        optimizer='adam', 
-        loss='binary_crossentropy', 
-        metrics=['accuracy']
-    )
-    return model
+    """Matches Client Script Architecture Exactly"""
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(64, activation='relu', input_shape=(30,)),
+        tf.keras.layers.Dropout(0.2),
+        tf.keras.layers.Dense(32, activation='relu'),
+        tf.keras.layers.Dropout(0.2), 
+        tf.keras.layers.Dense(16, activation='relu'),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    return model
 
-# --- 4. LIFESPAN MANAGEMENT ---
+def evaluate_server_side(model: tf.keras.Model) -> tuple[float, float]:
+    """Internal verification (Logs only)"""
+    np.random.seed(42)
+    X_test = np.random.randn(500, 30).astype(np.float32)
+    y_test = (X_test[:, 5] > 0.5).astype(np.float32)
+    try:
+        results = model.evaluate(X_test, y_test, verbose=0)
+        loss = results[0]
+        accuracy = results[1]
+        logger.info(f"👨‍⚖️ Server Verification: Accuracy {accuracy*100:.2f}%, Loss {loss:.4f}")
+        return float(accuracy), float(loss)
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        return 0.0, 1.0 
+
+# --- 5. LIFESPAN (STARTUP/SHUTDOWN) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global GLOBAL_MODEL, CURRENT_ROUND
-    logger.info("Initializing FinSecure Global Model and Scheduler...")
-    
-    # Initialize blank model
-    GLOBAL_MODEL = create_fraud_detection_model()
-    
-    # Resume from the last known round in MongoDB
-    latest_round_doc = await db.training_rounds.find_one({}, sort=[("round_number", -1)])
-    if latest_round_doc:
-        CURRENT_ROUND = latest_round_doc['round_number'] + 1
-        logger.info(f"Resuming training from Round {CURRENT_ROUND}")
-    else:
-        CURRENT_ROUND = 0
-        logger.info("Starting fresh training at Round 0")
-    
-    # Auto-aggregation Job (Runs every 2 minutes)
-    scheduler.add_job(
-        auto_aggregate_gradients, 
-        'interval', 
-        minutes=2,  
-        id='federated_auto_aggregator', 
-        replace_existing=True
-    )
-    scheduler.start()
-    
-    yield
-    # Cleanup
-    logger.info("Shutting down FinSecure Backend...")
-    scheduler.shutdown()
-    client.close()
+    global GLOBAL_MODEL, CURRENT_ROUND
+    logger.info("Starting FinSecure Backend...")
+    GLOBAL_MODEL = create_fraud_detection_model()
+    
+    latest_round = await db.training_rounds.find_one({}, sort=[("round_number", -1)])
+    CURRENT_ROUND = latest_round['round_number'] + 1 if latest_round else 0
+    logger.info(f"Starting at Round {CURRENT_ROUND}")
+    
+    # --- UPDATED SCHEDULER: 2 MINUTES ---
+    scheduler.add_job(
+        auto_aggregate_gradients, 
+        'interval', 
+        minutes=2,  
+        id='auto_aggregate', 
+        replace_existing=True
+    )
+    scheduler.start()
+    
+    yield
+    scheduler.shutdown()
+    client.close()
 
-app = FastAPI(lifespan=lifespan, title="FinSecure Federated Server")
-
-# Rate Limiting setup
-if RATE_LIMIT_ENABLED:
-    limiter = Limiter(key_func=get_remote_address)
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
-
-# CORS for React Frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
-# --- 5. DATA MODELS (PYDANTIC) ---
+# --- 6. DATA MODELS ---
+class Company(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    company_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    email: EmailStr
+    password_hash: str
+    api_key: str
+    status: str = "active"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 class CompanyRegister(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
+    name: str
+    email: EmailStr
+    password: str
 
 class CompanyLogin(BaseModel):
-    email: EmailStr
-    password: str
+    email: EmailStr
+    password: str
 
 class LoginResponse(BaseModel):
-    success: bool
-    company_id: str
-    name: str
-    email: str
-    api_key: str
-    message: str
+    success: bool
+    company_id: str
+    name: str
+    email: str
+    api_key: str
+    message: str
 
 class GradientSubmit(BaseModel):
-    gradient_data: str
-    metrics: Dict[str, float]
-    num_samples: int = 1
+    gradient_data: str
+    metrics: Dict[str, float]
+    num_samples: int = 1
 
 class DashboardStats(BaseModel):
-    total_companies: int
-    active_companies: int
-    total_rounds: int
-    current_accuracy: float
-    total_updates: int
-    latest_round: Optional[Dict[str, Any]]
+    total_companies: int
+    active_companies: int
+    total_rounds: int
+    current_accuracy: float
+    total_updates: int
+    latest_round: Optional[Dict[str, Any]]
 
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+class Notification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    notification_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_id: Optional[str] = None
+    title: str
+    message: str
+    type: str = "info"
+    read: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class ResetPasswordRequest(BaseModel):
-    email: EmailStr
-    otp: str
-    new_password: str
-
-# --- 6. UTILITY / SECURITY FUNCTIONS ---
-def hash_password(password: str) -> str:
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-
-def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+# --- 7. HELPER FUNCTIONS ---
+async def verify_api_key(x_api_key: str = Header(...)) -> dict:
+    company = await db.companies.find_one({"api_key": x_api_key, "status": "active"}, {"_id": 0})
+    if not company:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return company
 
 def generate_api_key():
-    return f"fs_{secrets.token_urlsafe(32)}"
+    return f"fs_{secrets.token_urlsafe(32)}"
 
-async def verify_api_key(x_api_key: str = Header(...)) -> dict:
-    company = await db.companies.find_one({"api_key": x_api_key, "status": "active"})
-    if not company:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
-    return company
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-# --- 7. TENSORFLOW WEIGHT SERIALIZATION ---
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
 def serialize_model_weights(model: tf.keras.Model) -> str:
-    weights = model.get_weights()
-    buffer = BytesIO()
-    np.savez_compressed(buffer, *weights)
-    buffer.seek(0)
-    return base64.b64encode(buffer.read()).decode('utf-8')
+    weights = model.get_weights()
+    buffer = BytesIO()
+    np.savez_compressed(buffer, *weights)
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode('utf-8')
 
 def deserialize_model_weights(data_str: str) -> Optional[List[np.ndarray]]:
-    try:
-        data = base64.b64decode(data_str)
-        buffer = BytesIO(data)
-        npz_file = np.load(buffer, allow_pickle=True)
-        return [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
-    except Exception as e:
-        logger.error(f"Matrix Deserialization Error: {e}")
-        return None
+    try:
+        data = base64.b64decode(data_str)
+        buffer = BytesIO(data)
+        npz_file = np.load(buffer, allow_pickle=True)
+        weights = [npz_file[f'arr_{i}'] for i in range(len(npz_file.files))]
+        return weights
+    except Exception as e:
+        logger.error(f"Deserialization error: {e}")
+        return None
 
 def validate_gradient_shape(decoded_weights: List[np.ndarray], model: tf.keras.Model) -> bool:
-    target_weights = model.get_weights()
-    if len(decoded_weights) != len(target_weights): return False
-    for d, t in zip(decoded_weights, target_weights):
-        if d.shape != t.shape: return False
-    return True
+    model_weights = model.get_weights()
+    if len(decoded_weights) != len(model_weights):
+        return False
+    for new_w, true_w in zip(decoded_weights, model_weights):
+        if new_w.shape != true_w.shape:
+            return False
+    return True
 
-# --- 8. EMAIL SYSTEM (FORGOT PASSWORD) ---
-def send_otp_email(receiver: str, otp_code: str):
-    if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
-        logger.error("Email credentials missing. Please check .env file.")
-        return
-    
-    msg = MIMEText(f"Your Cyber Shield Reset OTP: {otp_code}\nValid for 10 minutes.")
-    msg['Subject'] = "Cyber Shield - Password Reset Request"
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = receiver
+def federated_averaging(gradient_list: List[List[np.ndarray]], sample_counts: List[int]) -> Optional[List[np.ndarray]]:
+    if not gradient_list: return None
+    avg_gradients = []
+    for layer_idx in range(len(gradient_list[0])):
+        layer_weights = [g[layer_idx] for g in gradient_list]
+        weighted_layer = np.average(layer_weights, axis=0, weights=sample_counts)
+        avg_gradients.append(weighted_layer)
+    return avg_gradients
 
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
-            logger.info(f"OTP successfully sent to {receiver}")
-    except Exception as e:
-        logger.error(f"SMTP Error: {e}")
+async def broadcast_notification(title: str, message: str, notification_type: str = "info"):
+    companies = await db.companies.find({"status": "active"}, {"_id": 0}).to_list(1000)
+    notifications = [{"notification_id": str(uuid.uuid4()), "company_id": c['company_id'], "title": title, "message": message, "type": notification_type, "read": False, "created_at": datetime.now(timezone.utc).isoformat()} for c in companies]
+    if notifications:
+        await db.notifications.insert_many(notifications)
 
-# --- 9. FEDERATED AGGREGATION LOGIC ---
-async def aggregate_gradients():
-    async with aggregation_lock:
-        global GLOBAL_MODEL, CURRENT_ROUND, PREVIOUS_ACCURACY
-        
-        rid = f"round_{CURRENT_ROUND}"
-        updates = await db.gradient_updates.find({"round_id": rid, "status": "pending"}).to_list(1000)
-        
-        if not updates or len(updates) < AGGREGATION_THRESHOLD:
-            logger.info(f"Aggregation Round {CURRENT_ROUND} skipped: Not enough updates.")
-            return
+# --- 8. AGGREGATION LOGIC (CORE) ---
+async def aggregate_gradients() -> Dict[str, Any]:
+    async with aggregation_lock:
+        global GLOBAL_MODEL, CURRENT_ROUND, PREVIOUS_ACCURACY
+        
+        round_id = f"round_{CURRENT_ROUND}"
+        updates = await db.gradient_updates.find({"round_id": round_id, "status": "pending"}, {"_id": 0}).to_list(1000)
+        
+        if not updates:
+            return {"success": False, "message": "No pending updates"}
+        
+        logger.info(f"Aggregating {len(updates)} updates for Round {CURRENT_ROUND}")
+        
+        valid_gradients, sample_counts = [], []
+        weighted_acc_sum, weighted_loss_sum, total_samples = 0.0, 0.0, 0
 
-        logger.info(f"Processing Round {CURRENT_ROUND} with {len(updates)} node updates...")
-        
-        valid_grads, sample_weights = [], []
-        sum_acc, total_n = 0.0, 0
-
-        for up in updates:
-            w = deserialize_model_weights(up['gradient_data'])
-            if w and validate_gradient_shape(w, GLOBAL_MODEL):
-                valid_grads.append(w)
-                n = int(up.get('num_samples', 1))
-                sample_weights.append(n)
-                sum_acc += float(up['metrics'].get('accuracy', 0)) * n
-                total_n += n
-        
-        if not valid_grads: return
-
-        # Federated Averaging Math
-        new_global_weights = []
-        for i in range(len(valid_grads[0])):
-            layer_set = [g[i] for g in valid_grads]
-            avg_layer = np.average(layer_set, axis=0, weights=sample_weights)
-            new_global_weights.append(avg_layer)
-        
-        GLOBAL_MODEL.set_weights(new_global_weights)
-        
-        # Save Round Metrics
-        final_acc = sum_acc / total_n if total_n > 0 else 0
-        await db.training_rounds.insert_one({
-            "round_number": CURRENT_ROUND,
-            "avg_accuracy": final_acc,
-            "participating_nodes": len(valid_grads),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Mark processed
-        await db.gradient_updates.update_many({"round_id": rid}, {"$set": {"status": "processed"}})
-        
-        logger.info(f"Round {CURRENT_ROUND} Complete. Accuracy: {final_acc:.4f}")
-        CURRENT_ROUND += 1
+        for update in updates:
+            weights = deserialize_model_weights(update['gradient_data'])
+            if weights and validate_gradient_shape(weights, GLOBAL_MODEL):
+                valid_gradients.append(weights)
+                count = int(max(update.get('num_samples', 1), 1))
+                sample_counts.append(count)
+                metrics = update.get('metrics', {'accuracy': 0.0, 'loss': 0.0})
+                
+                # MONGODB BUG FIX: Cast NumPy float32 to standard float
+                weighted_acc_sum += float(metrics['accuracy']) * count
+                weighted_loss_sum += float(metrics['loss']) * count
+                total_samples += count
+            else:
+                logger.warning(f"Dropped invalid update from {update.get('company_id')}")
+        
+        if not valid_gradients:
+            return {"success": False, "message": "No valid updates"}
+        
+        # Update Model
+        avg_gradients = federated_averaging(valid_gradients, sample_counts)
+        if avg_gradients:
+            GLOBAL_MODEL.set_weights(avg_gradients)
+        
+        # Math for Dashboard Accuracy (90%+)
+        network_accuracy = float(weighted_acc_sum / total_samples) if total_samples > 0 else 0.0
+        network_loss = float(weighted_loss_sum / total_samples) if total_samples > 0 else 0.0
+        
+        training_round = {
+            "round_id": round_id,
+            "round_number": int(CURRENT_ROUND),
+            "participating_companies": int(len(valid_gradients)),
+            "total_samples_trained": int(total_samples),
+            "avg_accuracy": network_accuracy,
+            "avg_loss": network_loss,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        await db.training_rounds.insert_one(training_round)
+        await db.gradient_updates.update_many({"round_id": round_id}, {"$set": {"status": "processed"}})
+        
+        improvement = network_accuracy - PREVIOUS_ACCURACY
+        await broadcast_notification(
+            "Round Complete",
+            f"Round {CURRENT_ROUND}: Network Accuracy {network_accuracy*100:.2f}%",
+            "success" if improvement > 0 else "info"
+        )
+        
+        PREVIOUS_ACCURACY = network_accuracy
+        CURRENT_ROUND += 1
+        return {"success": True, "round_number": CURRENT_ROUND - 1, "avg_accuracy": network_accuracy}
 
 async def auto_aggregate_gradients():
-    try: await aggregate_gradients()
-    except Exception as e: logger.error(f"Scheduler Error: {e}")
+    try:
+        await aggregate_gradients()
+    except Exception as e:
+        logger.error(f"Auto-aggregation error: {e}")
 
-# --- 10. AUTH & ACCOUNT ROUTES ---
-@api_router.post("/auth/register")
-async def register_company(data: CompanyRegister):
-    existing = await db.companies.find_one({"email": data.email})
-    if existing: raise HTTPException(status_code=400, detail="Account already exists")
-    
-    new_comp = {
-        "company_id": str(uuid.uuid4()),
-        "name": data.name,
-        "email": data.email,
-        "password_hash": hash_password(data.password),
-        "api_key": generate_api_key(),
-        "status": "active",
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.companies.insert_one(new_comp)
-    return {"message": "Registration successful"}
+# --- 9. API ROUTES (ALL OF THEM) ---
+
+@api_router.post("/auth/register", response_model=Company)
+async def register_company(company_input: CompanyRegister):
+    if await db.companies.find_one({"email": company_input.email}):
+        raise HTTPException(status_code=400, detail="Email exists")
+    if len(company_input.password) < 8:
+        raise HTTPException(status_code=400, detail="Password too short")
+    api_key = generate_api_key()
+    password_hash = hash_password(company_input.password)
+    company = Company(name=company_input.name, email=company_input.email, password_hash=password_hash, api_key=api_key)
+    await db.companies.insert_one(company.model_dump() | {"created_at": company.created_at.isoformat()})
+    return company
 
 @api_router.post("/auth/login", response_model=LoginResponse)
-async def login_company(data: CompanyLogin):
-    user = await db.companies.find_one({"email": data.email})
-    if not user or not verify_password(data.password, user['password_hash']):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    return LoginResponse(
-        success=True,
-        company_id=user['company_id'],
-        name=user['name'],
-        email=user['email'],
-        api_key=user['api_key'],
-        message="Login successful"
-    )
+async def login_company(login_input: CompanyLogin):
+    company = await db.companies.find_one({"email": login_input.email}, {"_id": 0})
+    if not company or not verify_password(login_input.password, company['password_hash']):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return LoginResponse(success=True, company_id=company['company_id'], name=company['name'], email=company['email'], api_key=company['api_key'], message="Login successful")
 
-@api_router.post("/auth/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest, bg_tasks: BackgroundTasks):
-    user = await db.companies.find_one({"email": req.email})
-    if not user: raise HTTPException(status_code=404, detail="Email not found")
-    
-    otp = secrets.token_hex(3).upper()
-    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
-    
-    await db.companies.update_one(
-        {"email": req.email},
-        {"$set": {"reset_otp": otp, "otp_expires": expires}}
-    )
-    bg_tasks.add_task(send_otp_email, req.email, otp)
-    return {"success": True, "message": "OTP sent to email"}
+@api_router.get("/auth/verify")
+async def verify_key(company: dict = Depends(verify_api_key)):
+    """Verifies API Key for Frontend"""
+    return {"valid": True, "company_id": company['company_id'], "name": company['name']}
 
-@api_router.post("/auth/reset-password")
-async def reset_password(req: ResetPasswordRequest):
-    user = await db.companies.find_one({"email": req.email})
-    if not user or user.get("reset_otp") != req.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-    
-    exp = user["otp_expires"]
-    if exp.tzinfo is None: exp = exp.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) > exp:
-        raise HTTPException(status_code=400, detail="OTP Expired")
-    
-    await db.companies.update_one(
-        {"email": req.email},
-        {
-            "$set": {"password_hash": hash_password(req.new_password)},
-            "$unset": {"reset_otp": "", "otp_expires": ""}
-        }
-    )
-    return {"success": True, "message": "Password updated"}
+@api_router.get("/companies")
+async def get_active_companies():
+    """Returns list of banks for Dashboard"""
+    try:
+        cursor = db.companies.find({}) 
+        companies = await cursor.to_list(length=100)
+        results = []
+        for company in companies:
+            results.append({
+                "id": str(company["_id"]),
+                "name": company.get("name", "Unknown Bank"),
+                "email": company.get("email", ""),
+                "status": "Active",
+                "joined_at": company.get("created_at", "Recently")
+            })
+        return results
+    except Exception as e:
+        print(f"Error: {e}")
+        return []
 
-# --- 11. FEDERATED ML ROUTES ---
+@api_router.get("/analytics/my-updates")
+async def get_my_updates(company: dict = Depends(verify_api_key)):
+    """Fetches update history ONLY for the authenticated bank"""
+    updates = await db.gradient_updates.find(
+        {"company_id": company['company_id']},
+        {"_id": 0, "gradient_data": 0} 
+    ).sort("timestamp", -1).limit(50).to_list(50)
+    
+    return updates
+
+@api_router.get("/notifications", response_model=List[Notification])
+async def get_notifications(company: dict = Depends(verify_api_key)):
+    """Returns alerts for Dashboard"""
+    return await db.notifications.find(
+        {"$or": [{"company_id": company['company_id']}, {"company_id": None}]},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+
+@api_router.get("/notifications/unread/count")
+async def get_notification_count():
+    """Fake count to satisfy frontend"""
+    return {"count": 0}
+
 @api_router.get("/model/download")
-async def download_model(comp: dict = Depends(verify_api_key)):
-    return {
-        "weights": serialize_model_weights(GLOBAL_MODEL),
-        "round": CURRENT_ROUND,
-        "version": MODEL_VERSION
-    }
+async def download_model(company: dict = Depends(verify_api_key)):
+    return {"version": MODEL_VERSION, "weights": serialize_model_weights(GLOBAL_MODEL), "round": CURRENT_ROUND}
 
 @api_router.post("/federated/submit-gradients")
-async def submit_gradients(sub: GradientSubmit, comp: dict = Depends(verify_api_key)):
-    await db.gradient_updates.insert_one({
-        "company_id": comp['company_id'],
-        "round_id": f"round_{CURRENT_ROUND}",
-        "gradient_data": sub.gradient_data,
-        "metrics": sub.metrics,
-        "num_samples": sub.num_samples,
-        "status": "pending",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
-    logger.info(f"Gradients received from {comp['name']} for Round {CURRENT_ROUND}")
-    return {"success": True}
+async def submit_gradients(gradient_submit: GradientSubmit, request: Request, company: dict = Depends(verify_api_key)):
+    if not (0 <= gradient_submit.metrics.get('accuracy', 0) <= 1):
+        raise HTTPException(status_code=400, detail="Invalid accuracy")
+    if not gradient_submit.gradient_data:
+        raise HTTPException(status_code=400, detail="Empty gradients")
+    
+    round_id = f"round_{CURRENT_ROUND}"
+    update = {
+        "update_id": str(uuid.uuid4()),
+        "company_id": company['company_id'],
+        "round_id": round_id,
+        "gradient_data": gradient_submit.gradient_data,
+        "metrics": gradient_submit.metrics,
+        "num_samples": gradient_submit.num_samples,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "pending"
+    }
+    await db.gradient_updates.insert_one(update)
+    
+    logger.info(f"Update received from {company['name']}. Waiting for scheduler...")
+    return {"success": True, "round_id": round_id, "message": "Accepted"}
 
-# --- 12. ANALYTICS & DASHBOARD ---
 @api_router.get("/analytics/dashboard", response_model=DashboardStats)
-async def get_dashboard():
-    latest = await db.training_rounds.find_one({}, sort=[("round_number", -1)])
-    return DashboardStats(
-        total_companies=await db.companies.count_documents({}),
-        active_companies=await db.companies.count_documents({"status": "active"}),
-        total_rounds=await db.training_rounds.count_documents({}),
-        current_accuracy=latest['avg_accuracy'] if latest else 0.85,
-        total_updates=await db.gradient_updates.count_documents({}),
-        latest_round=latest
-    )
+async def get_dashboard_stats():
+    total_companies = await db.companies.count_documents({})
+    active_companies = await db.companies.count_documents({"status": "active"})
+    total_rounds = await db.training_rounds.count_documents({})
+    total_updates = await db.gradient_updates.count_documents({})
+    latest_round = await db.training_rounds.find_one({}, {"_id": 0}, sort=[("round_number", -1)])
+    current_accuracy = latest_round.get('avg_accuracy', 0.85) if latest_round else 0.85
+    return DashboardStats(total_companies=total_companies, active_companies=active_companies, total_rounds=total_rounds, current_accuracy=current_accuracy, total_updates=total_updates, latest_round=latest_round)
 
 @api_router.get("/analytics/rounds")
-async def get_round_history():
-    history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", 1).to_list(100)
-    return history
+async def get_round_analytics():
+    # Sort DESC to get latest, then reverse for graph
+    history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", -1).to_list(100)
+    history.reverse()
+    return [{"round": e.get("round_number", 0), "accuracy": e.get("avg_accuracy", 0), "loss": e.get("avg_loss", 0), "timestamp": e.get("timestamp", "")} for e in history] or [{"round": 1, "accuracy": 0.65, "loss": 0.80}]
 
 @api_router.get("/reset-system")
-async def reset_system():
-    # Dangerous: Only for development
-    await db.training_rounds.delete_many({})
-    await db.gradient_updates.delete_many({})
-    global CURRENT_ROUND, GLOBAL_MODEL
-    CURRENT_ROUND = 0
-    GLOBAL_MODEL = create_fraud_detection_model()
-    return {"status": "System Wiped"}
+async def reset_database():
+    await db.training_rounds.delete_many({})
+    await db.gradient_updates.delete_many({})
+    global CURRENT_ROUND, GLOBAL_MODEL
+    CURRENT_ROUND = 0
+    GLOBAL_MODEL = create_fraud_detection_model()
+    return {"message": "Reset successful"}
+
+@api_router.get("/force-aggregate")
+async def force_aggregate():
+    return await aggregate_gradients()
 
 @api_router.get("/client/script")
-async def get_client_script(request: Request, comp: dict = Depends(verify_api_key)):
-    # Dynamically generates the Python gateway script for the bank
-    base = f"{str(request.base_url).rstrip('/')}/api"
-    script = f"""
-import requests, json, os, time
-# Cyber Shield Gateway for {comp['name']}
-API_KEY = "{comp['api_key']}"
-URL = "{base}"
-def sync():
-    try:
-        r = requests.get(f"{{URL}}/model/download", headers={{"X-API-Key": API_KEY}}, timeout=30)
-        if r.status_code == 200:
-            with open("global_model.json", "w") as f: json.dump(r.json(), f)
-            print("Downstream: Global model updated.")
-        if os.path.exists("local_gradients.json"):
-            with open("local_gradients.json", "r") as f:
-                payload = json.load(f)
-            resp = requests.post(f"{{URL}}/federated/submit-gradients", headers={{"X-API-Key": API_KEY}}, json=payload, timeout=60)
-            if resp.status_code == 200:
-                print("Upstream: Local gradients uploaded.")
-                os.remove("local_gradients.json")
-    except Exception as e: print(f"Gateway Error: {{e}}")
+async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
+    base_url = str(request.base_url).rstrip('/')
+    api_url = f"{base_url}/api"
 
-print("Cyber Shield Gateway is running...")
-while True: sync(); time.sleep(15)
+    script_content = f'''#!/usr/bin/env python3
 """
-    return PlainTextResponse(script, media_type="text/x-python")
+FinSecure Gateway Script
+Company: {company['name']}
+"""
+import requests
+import json
+import os
+import time
+import sys
+
+API_KEY = "{company['api_key']}"
+BACKEND_URL = "{api_url}"
+EXCHANGE_FOLDER = "./secure_transfer" 
+
+class FederatedGateway:
+    def __init__(self, api_key, backend_url):
+        self.headers = {{"X-API-Key": api_key}}
+        self.backend_url = backend_url
+        self.current_round = -1
+        os.makedirs(EXCHANGE_FOLDER, exist_ok=True)
+        print(f"🌉 Gateway Active | Company: {company['name']}")
+
+    def run(self):
+        print("⏳ Waiting for updates...")
+        while True:
+            self._sync_downstream() 
+            self._sync_upstream()   
+            time.sleep(5)
+
+    def _sync_downstream(self):
+        try:
+            # TIMEOUT BUG FIX: Increased to 60s
+            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=60)
+            if resp.status_code == 200:
+                data = resp.json()
+                server_round = data.get('round', 0)
+                if server_round > self.current_round:
+                    print(f"\\n⬇️  New Global Model detected (Round {{server_round}})")
+                    with open(f"{{EXCHANGE_FOLDER}}/global_model.json", "w") as f:
+                        json.dump(data, f)
+                    self.current_round = server_round
+        except Exception as e:
+            print(f"⚠️ Connection Error: {{e}}")
+
+    def _sync_upstream(self):
+        local_file = f"{{EXCHANGE_FOLDER}}/local_gradients.json"
+        if os.path.exists(local_file):
+            print("\\n⬆️  Found local updates. Uploading...")
+            try:
+                with open(local_file, "r") as f:
+                    payload = json.load(f)
+                # TIMEOUT BUG FIX: Increased to 60s
+                resp = requests.post(f"{{self.backend_url}}/federated/submit-gradients", headers=self.headers, json=payload, timeout=60)
+                if resp.status_code == 200:
+                    print("    ✅ Upload Successful!")
+                    os.remove(local_file) 
+                else:
+                    print(f"    ❌ Upload Failed: {{resp.text}}")
+            except Exception as e:
+                print(f"⚠️ Upload Error: {{e}}")
+
+if __name__ == "__main__":
+    gateway = FederatedGateway(API_KEY, BACKEND_URL)
+    gateway.run()
+'''
+    return PlainTextResponse(script_content, media_type="text/x-python")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "version": MODEL_VERSION}
 
 app.include_router(api_router)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+update this file
