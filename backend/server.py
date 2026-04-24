@@ -454,6 +454,12 @@ class FinSecureClient:
             print(".", end="", flush=True)
 '''
     return PlainTextResponse(sdk_content, media_type="text/x-python")
+@api_router.get("/client/script")
+async def get_client_script(request: Request, company: dict = Depends(verify_api_key)):
+    base_url = str(request.base_url).rstrip('/')
+    api_url = f"{base_url}/api"
+
+    script_content = f'''#!/usr/bin/env python3
 import requests
 import numpy as np
 import tensorflow as tf
@@ -464,10 +470,11 @@ import os
 import csv
 
 # --- CONFIGURATION ---
-API_KEY = "PUT_YOUR_API_KEY_HERE"  # <--- CHANGE THIS TO YOUR BANK'S API KEY
-BACKEND_URL = "https://finsecure-ochi.onrender.com/api"
-HEADERS = {"X-API-Key": API_KEY}
-LOCAL_DB = "local_transactions.csv"
+API_KEY = "{company['api_key']}"
+BACKEND_URL = "{api_url}"
+BANK_NAME = "{company['name']}"
+HEADERS = {{"X-API-Key": API_KEY}}
+LOCAL_DB = f"{{BANK_NAME.replace(' ', '_')}}_local_transactions.csv"
 
 # --- INITIALIZE LOCAL DATASET ---
 if not os.path.exists(LOCAL_DB):
@@ -475,7 +482,6 @@ if not os.path.exists(LOCAL_DB):
     with open(LOCAL_DB, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['Amount', 'Time', 'Is_International', 'Is_Fraud'])
-        # Generate 100 safe transactions and 5 random fraud transactions to start
         for _ in range(100):
             writer.writerow([round(np.random.uniform(10, 800), 2), round(np.random.uniform(0, 24), 1), 0, 0])
         for _ in range(5):
@@ -493,25 +499,25 @@ model = tf.keras.Sequential([
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 def download_global_model():
-    print("\n⏳ Fetching latest global intelligence...")
+    print("\\n⏳ Fetching latest global intelligence...")
     try:
-        res = requests.get(f"{BACKEND_URL}/model/download", headers=HEADERS)
+        res = requests.get(f"{{BACKEND_URL}}/model/download", headers=HEADERS)
         if res.status_code == 200:
             data = res.json()
             weights_data = base64.b64decode(data['weights'])
             npz = np.load(io.BytesIO(weights_data), allow_pickle=True)
-            model.set_weights([npz[f'arr_{i}'] for i in range(len(npz.files))])
-            print(f"✅ Synced to Round {data['round']}")
+            model.set_weights([npz[f'arr_{{i}}'] for i in range(len(npz.files))])
+            print(f"✅ Synced to Round {{data['round']}}")
         else:
             print("❌ Failed to download model. Check your API Key.")
     except Exception as e:
-        print(f"❌ Network Error: {e}")
+        print(f"❌ Network Error: {{e}}")
 
 if __name__ == "__main__":
     download_global_model()
     
     while True:
-        print("\n========== CYBER SHIELD TERMINAL ==========")
+        print(f"\\n========== {{BANK_NAME}} TERMINAL ==========")
         print("1. Process Live Transaction (Saves to Ledger)")
         print("2. Execute Routine Training & Upload (Trains on all local data)")
         print("3. Sync Latest Global Intelligence")
@@ -524,49 +530,43 @@ if __name__ == "__main__":
             time_val = float(input("🕒 Time (0-24): "))
             is_intl = float(input("🌍 International (1=Yes, 0=No): "))
             
-            # Map features to the 30-slot array
             test_txn = np.zeros((1, 30), dtype=np.float32)
             test_txn[0, 0] = amt / 10000.0
             test_txn[0, 1] = time_val / 24.0
             test_txn[0, 2] = is_intl
             
-            print(f"\n🧠 Analyzing against neural weights...")
+            print(f"\\n🧠 Analyzing against neural weights...")
             time.sleep(0.5)
             pred = model.predict(test_txn, verbose=0)[0][0]
             
             is_fraud_prediction = 1 if pred > 0.5 else 0
             
             if is_fraud_prediction:
-                print(f"🚨 TRANSACTION BLOCKED! (Fraud Risk: {pred*100:.1f}%)")
+                print(f"🚨 TRANSACTION BLOCKED! (Fraud Risk: {{pred*100:.1f}}%)")
             else:
-                print(f"✅ TRANSACTION APPROVED (Fraud Risk: {pred*100:.1f}%)")
+                print(f"✅ TRANSACTION APPROVED (Fraud Risk: {{pred*100:.1f}}%)")
                 
-            # Log the transaction to the local ledger for future training
             actual_fraud = input("Was this actually a fraudulent transaction? (1 for Yes, 0 for No): ")
             with open(LOCAL_DB, 'a', newline='') as f:
                 csv.writer(f).writerow([amt, time_val, is_intl, int(actual_fraud)])
             print("💾 Transaction securely logged to local ledger.")
 
         elif choice == '2':
-            print(f"\n⚙️ Initiating Routine Federated Training Cycle...")
+            print(f"\\n⚙️ Initiating Routine Federated Training Cycle...")
             
-            # 1. Load the entire continuous dataset
             print("📊 Reading local ledger data...")
             data = np.genfromtxt(LOCAL_DB, delimiter=',', skip_header=1)
             X_raw = data[:, :3]
             y_train = data[:, 3]
             
-            # Map to 30 features
             X_train = np.zeros((len(X_raw), 30), dtype=np.float32)
             X_train[:, 0] = X_raw[:, 0] / 10000.0
             X_train[:, 1] = X_raw[:, 1] / 24.0
             X_train[:, 2] = X_raw[:, 2]
             
-            # 2. Train locally on everything (safe and fraud)
-            print(f"🧠 Training model on {len(X_train)} historical records...")
+            print(f"🧠 Training model on {{len(X_train)}} historical records...")
             hist = model.fit(X_train, y_train, epochs=15, verbose=0)
             
-            # 3. Extract and compress the weights
             buffer = io.BytesIO()
             np.savez_compressed(buffer, *model.get_weights())
             buffer.seek(0)
@@ -574,44 +574,26 @@ if __name__ == "__main__":
             
             print(f"⬆️ Uploading Encrypted Intelligence to Server...")
             try:
-                res = requests.post(f"{BACKEND_URL}/federated/submit-gradients", headers=HEADERS, json={
+                res = requests.post(f"{{BACKEND_URL}}/federated/submit-gradients", headers=HEADERS, json={{
                     "gradient_data": encoded_weights,
-                    "metrics": {"accuracy": float(hist.history['accuracy'][-1]), "loss": float(hist.history['loss'][-1])},
+                    "metrics": {{"accuracy": float(hist.history['accuracy'][-1]), "loss": float(hist.history['loss'][-1])}},
                     "num_samples": len(X_train)
-                })
+                }})
                 
                 if res.status_code == 200:
                     print(f"✅ Network Notified! Global Model Updated.")
                     download_global_model()
                 else:
-                    print(f"❌ Upload Failed: {res.text}")
+                    print(f"❌ Upload Failed: {{res.text}}")
             except Exception as e:
-                print(f"❌ Failed to connect: {e}")
+                print(f"❌ Failed to connect: {{e}}")
 
         elif choice == '3':
             download_global_model()
         elif choice == '4':
             break
-@api_router.get("/companies")
-async def get_active_companies():
-    """Returns list of banks for Dashboard"""
-    try:
-        cursor = db.companies.find({}) 
-        companies = await cursor.to_list(length=100)
-        results = []
-        for company in companies:
-            results.append({
-                "id": str(company["_id"]),
-                "name": company.get("name", "Unknown Bank"),
-                "email": company.get("email", ""),
-                "status": "Active",
-                "joined_at": company.get("created_at", "Recently")
-            })
-        return results
-    except Exception as e:
-        print(f"Error: {e}")
-        return []
-
+'''
+    return PlainTextResponse(script_content, media_type="text/x-python")
 # --- NEW ENDPOINT: MY UPDATES ---
 @api_router.get("/analytics/my-updates")
 async def get_my_updates(company: dict = Depends(verify_api_key)):
