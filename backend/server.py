@@ -322,137 +322,7 @@ async def login_company(login_input: CompanyLogin):
 async def verify_key(company: dict = Depends(verify_api_key)):
     """Verifies API Key for Frontend"""
     return {"valid": True, "company_id": company['company_id'], "name": company['name']}
-# --- NEW SDK ENDPOINT ---
-@api_router.get("/client/sdk")
-async def get_client_sdk(request: Request):
-    """
-    Serves the FinSecure SDK library file.
-    """
-    base_url = str(request.base_url).rstrip('/')
-    # We use the base_url dynamically so it works on Render
-    
-    sdk_content = f'''"""
-FinSecure SDK v2.0
-The official Python library for connecting to the FinSecure Federated Network.
-"""
-import requests
-import numpy as np
-import base64
-import io
-import json
-import time
-import os
 
-class FinSecureClient:
-    def __init__(self, api_key, server_url="{base_url}"):
-        self.api_key = api_key
-        self.server_url = server_url.rstrip('/')
-        self.headers = {{"X-API-Key": self.api_key}}
-        self.current_round = 0
-        
-        print(f"🔒 FinSecure SDK Initialized")
-        print(f"   Server: {{self.server_url}}")
-
-    def connect(self):
-        """Verifies connection to the central server"""
-        try:
-            print("   Connecting...", end=" ", flush=True)
-            response = requests.get(f"{{self.server_url}}/api/auth/verify", headers=self.headers)
-            if response.status_code == 200:
-                data = response.json()
-                print(f"✅ Connected as: {{data['name']}}")
-                return True
-            else:
-                print(f"❌ Failed: {{response.text}}")
-                return False
-        except Exception as e:
-            print(f"❌ Network Error: {{e}}")
-            return False
-
-    def fetch_global_model(self):
-        """Downloads the latest global model weights"""
-        try:
-            response = requests.get(f"{{self.server_url}}/api/model/download", headers=self.headers)
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Check if we already have this round
-                if data['round'] <= self.current_round:
-                    return None, self.current_round
-
-                self.current_round = data['round']
-                
-                # Deserialize weights
-                weights_data = base64.b64decode(data['weights'])
-                buffer = io.BytesIO(weights_data)
-                npz = np.load(buffer, allow_pickle=True)
-                weights = [npz[f'arr_{{i}}'] for i in range(len(npz.files))]
-                
-                print(f"\\n⬇️  Downloaded Global Model (Round {{self.current_round}})")
-                return weights, self.current_round
-            return None, self.current_round
-        except Exception as e:
-            print(f"⚠️ Error fetching model: {{e}}")
-            return None, 0
-
-    def submit_update(self, model, X_train_len, metrics):
-        """
-        Uploads trained gradients to the server.
-        """
-        try:
-            # 1. Serialize Weights
-            weights = model.get_weights()
-            buffer = io.BytesIO()
-            np.savez_compressed(buffer, *weights)
-            buffer.seek(0)
-            encoded_weights = base64.b64encode(buffer.read()).decode('utf-8')
-            
-            # 2. Prepare Payload
-            payload = {{
-                "gradient_data": encoded_weights,
-                "metrics": {{
-                    "accuracy": float(metrics.get('accuracy', 0)),
-                    "loss": float(metrics.get('loss', 0))
-                }},
-                "num_samples": int(X_train_len)
-            }}
-            
-            # 3. Upload
-            print(f"⬆️  Uploading results (Accuracy: {{metrics['accuracy']:.2%}})...", end=" ")
-            response = requests.post(
-                f"{{self.server_url}}/api/federated/submit-gradients",
-                headers=self.headers,
-                json=payload
-            )
-            
-            if response.status_code == 200:
-                print("✅ Success")
-                return True
-            else:
-                print(f"❌ Rejected: {{response.text}}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Submission Error: {{e}}")
-            return False
-
-    def await_next_round(self):
-        """Helper to pause execution until a new round starts"""
-        print("⏳ Waiting for next round...", end="", flush=True)
-        while True:
-            try:
-                response = requests.get(f"{{self.server_url}}/api/model/download", headers=self.headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data['round'] > self.current_round:
-                        print("\\n🚀 New Round Started!")
-                        return
-            except:
-                pass
-            time.sleep(5)
-            print(".", end="", flush=True)
-'''
-    return PlainTextResponse(sdk_content, media_type="text/x-python")
 @api_router.get("/companies")
 async def get_active_companies():
     """Returns list of banks for Dashboard"""
@@ -473,17 +343,15 @@ async def get_active_companies():
         print(f"Error: {e}")
         return []
 
-# --- NEW ENDPOINT: MY UPDATES ---
 @api_router.get("/analytics/my-updates")
 async def get_my_updates(company: dict = Depends(verify_api_key)):
     """Fetches update history ONLY for the authenticated bank"""
     updates = await db.gradient_updates.find(
         {"company_id": company['company_id']},
-        {"_id": 0, "gradient_data": 0} # Exclude heavy blob data
+        {"_id": 0, "gradient_data": 0} 
     ).sort("timestamp", -1).limit(50).to_list(50)
     
     return updates
-# -------------------------------
 
 @api_router.get("/notifications", response_model=List[Notification])
 async def get_notifications(company: dict = Depends(verify_api_key)):
@@ -537,7 +405,6 @@ async def get_dashboard_stats():
 
 @api_router.get("/analytics/rounds")
 async def get_round_analytics():
-    # Sort DESC to get latest, then reverse for graph
     history = await db.training_rounds.find({}, {"_id": 0}).sort("round_number", -1).to_list(100)
     history.reverse()
     return [{"round": e.get("round_number", 0), "accuracy": e.get("avg_accuracy", 0), "loss": e.get("avg_loss", 0), "timestamp": e.get("timestamp", "")} for e in history] or [{"round": 1, "accuracy": 0.65, "loss": 0.80}]
@@ -592,7 +459,7 @@ class FederatedGateway:
 
     def _sync_downstream(self):
         try:
-            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=10)
+            resp = requests.get(f"{{self.backend_url}}/model/download", headers=self.headers, timeout=60)
             if resp.status_code == 200:
                 data = resp.json()
                 server_round = data.get('round', 0)
@@ -611,7 +478,7 @@ class FederatedGateway:
             try:
                 with open(local_file, "r") as f:
                     payload = json.load(f)
-                resp = requests.post(f"{{self.backend_url}}/federated/submit-gradients", headers=self.headers, json=payload)
+                resp = requests.post(f"{{self.backend_url}}/federated/submit-gradients", headers=self.headers, json=payload, timeout=60)
                 if resp.status_code == 200:
                     print("    ✅ Upload Successful!")
                     os.remove(local_file) 
